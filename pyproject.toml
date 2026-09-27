@@ -1,0 +1,41 @@
+[project]
+name = "sovereign-selfheal-validation"
+version = "0.1.0"
+description = "Validation suite of the Sovereign Self-Healing Platform demo"
+requires-python = ">=3.12"
+dependencies = [
+    # Same range as the ansible repo: tested with ansible-core 2.20.
+    "ansible-core>=2.20,<2.21",
+    # Python client used by the kubernetes.core modules, the role modules and the harness.
+    "kubernetes>=31.0.0",
+    # HTTP client of the harness (harness/load.py).
+    "requests>=2.32",
+]
+
+[dependency-groups]
+# Installed by default with `uv sync`; skip them with `uv sync --no-dev`.
+dev = [
+    "ansible-lint>=25.0.0",
+    "yamllint>=1.35.0",
+    "ruff>=0.6.0",
+    "pytest>=8.0.0",
+]
+
+[tool.uv]
+# This repo is not a Python package: uv manages only the virtual environment.
+package = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+# Same rule set as the router repo.
+select = ["E", "F", "W", "B", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff.lint.per-file-ignores]
+# Ansible modules put DOCUMENTATION and RETURN before the imports.
+"roles/*/library/*.py" = ["E402"]

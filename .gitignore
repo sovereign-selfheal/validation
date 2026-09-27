@@ -1,0 +1,24 @@
+# Credentials and cluster access: never commit
+*.kubeconfig
+kubeconfig
+.kubeconfig*
+*.pem
+*.key
+.secrets/
+
+# Run reports (may contain prompts and cluster names)
+reports/
+
+# Ansible / Python artefacts
+*.retry
+.ansible/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

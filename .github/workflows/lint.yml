@@ -1,0 +1,41 @@
+---
+name: lint
+
+"on":
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.2.0
+
+      - name: Install Python dependencies (uv.lock)
+        run: uv sync --locked
+
+      - name: Install Ansible collections
+        run: uv run ansible-galaxy collection install -r requirements.yml
+
+      - name: yamllint
+        run: uv run yamllint .
+
+      - name: ansible-lint
+        run: uv run ansible-lint
+
+      - name: Syntax check
+        run: uv run ansible-playbook playbooks/validate.yml --syntax-check
+
+      - name: ruff
+        run: uv run ruff check harness/ tests/ roles/
+
+      - name: Unit tests
+        run: uv run pytest

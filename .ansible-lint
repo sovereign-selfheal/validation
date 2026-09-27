@@ -1,0 +1,11 @@
+---
+profile: production
+exclude_paths:
+  - .ansible/
+  - .venv/                     # created by uv sync
+  - reports/                   # local run reports
+skip_list:
+  # The validation_* variables (validation_results, validation_ctx, validation_keys, ...) are
+  # shared by all the roles on purpose: every role adds its results to the same list.
+  # Role-private variables still use the role name as a prefix.
+  - var-naming[no-role-prefix]
