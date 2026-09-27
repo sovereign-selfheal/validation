@@ -49,7 +49,7 @@
         name: "{{ validate_selfheal_name }}"
       register: validate_selfheal_after
       until: validate_selfheal_after.resources[0].data[validate_selfheal_key] == validate_selfheal_original
-      retries: "{{ (validate_selfheal_timeout / 2) | int }}"
+      retries: "{{ (validate_selfheal_timeout | int / 2) | int }}"
       delay: 2
       failed_when: false
 

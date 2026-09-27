@@ -12,8 +12,8 @@
   hosts: localhost
   gather_facts: false
   tasks:
-    # The report runs in "always": the results collected so far are printed and saved even
-    # when a task fails hard (for example the API is not reachable).
+    # A hard failure (for example the API is not reachable) is recorded as a FAIL in
+    # "rescue"; the report runs in "always" and prints and saves the results collected so far.
     - name: Run the checks
       block:
         - name: Read the cluster, the demo profile and the API keys
@@ -38,6 +38,14 @@
           ansible.builtin.import_role:
             name: validate_selfheal
           tags: [selfheal]
+      rescue:
+        - name: Record the hard failure
+          ansible.builtin.include_role:
+            name: validate_report
+            tasks_from: aborted
+            apply:
+              tags: [always]
+          tags: [always]
       always:
         - name: Report the results
           ansible.builtin.import_role:

@@ -61,6 +61,8 @@ Things to know:
 Every check gives one line: `PASS`, `FAIL`, `WARN` or `SKIP`, an id, a name and a detail. The
 play fails at the end when at least one check is `FAIL`. A `WARN` does not fail the play, for
 example an InstallPlan for a newer operator version that the pinning policy leaves unapproved.
+When a task fails hard (for example the cluster API is not reachable), the run stops, records
+one `X` result (`run aborted at task: ...`) and still prints and saves the results collected so far.
 
 The same results are written as JSON in `reports/validation-<cluster>-<time>.json` (ignored by
 git). The JSON also holds the context: cluster, profile, tags.

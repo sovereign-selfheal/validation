@@ -1,0 +1,14 @@
+---
+# Called from the rescue section of the play: record a hard failure as a result, so that
+# the summary never says "0 failed" for an aborted run. ansible_failed_task exists only in
+# a rescue section.
+- name: Record the aborted run
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results | default([]) + [_r] }}"
+  vars:
+    _r:
+      group: run
+      id: X
+      name: "run aborted at task: {{ ansible_failed_task.name | default('unknown') }}"
+      status: FAIL
+      detail: "{{ (ansible_failed_result.msg | default('') | string)[:300] }}"

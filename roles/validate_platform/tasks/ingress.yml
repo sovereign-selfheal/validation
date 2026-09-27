@@ -78,7 +78,7 @@
          | selectattr('spec.scaleTargetRef.name', 'match', validate_platform_gateway_name) | first | default({}) }}
     _min: "{{ _hpa.spec.minReplicas | default(0) | int }}"
     _max: "{{ _hpa.spec.maxReplicas | default(0) | int }}"
-    _fixed: "{{ _min | int == validate_platform_gateway_replicas and _max | int == validate_platform_gateway_replicas }}"
+    _fixed: "{{ _min | int == validate_platform_gateway_replicas | int and _max | int == validate_platform_gateway_replicas | int }}"
     _r:
       group: platform
       id: P9

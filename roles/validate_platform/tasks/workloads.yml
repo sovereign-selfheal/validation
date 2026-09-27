@@ -49,8 +49,8 @@
       id: "P11-{{ item.item.name }}"
       name: "{{ item.item.name }}: at least {{ validate_platform_min_replicas }} Ready replicas on different nodes"
       status: >-
-        {{ 'FAIL' if _ready_count | int < validate_platform_min_replicas
-           else ('PASS' if _nodes | length >= validate_platform_min_replicas else 'WARN') }}
+        {{ 'FAIL' if _ready_count | int < validate_platform_min_replicas | int
+           else ('PASS' if _nodes | length >= validate_platform_min_replicas | int else 'WARN') }}
       detail: "{{ _ready_count }} Ready on {{ _nodes | length }} node(s)"
   loop: "{{ validate_platform_ha_pods.results }}"
   loop_control:
@@ -91,7 +91,7 @@
       id: P13
       name: Authorino with at least {{ validate_platform_authorino_min_replicas }} replicas
       status: >-
-        {{ 'PASS' if _replicas | length > 0 and _replicas | min >= validate_platform_authorino_min_replicas else 'FAIL' }}
+        {{ 'PASS' if _replicas | length > 0 and _replicas | min >= validate_platform_authorino_min_replicas | int else 'FAIL' }}
       detail: "{{ 'no Authorino' if not _replicas else 'replicas: ' ~ _replicas | join(', ') }}"
 
 - name: Read the InferenceServices
