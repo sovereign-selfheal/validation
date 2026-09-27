@@ -1,0 +1,34 @@
+---
+# Shared settings of the validation roles. The names match the gitops and ansible repos;
+# override them with -e only when those repos change.
+
+# Run the groups that load or change the cluster (sota, parallel, legal, failover,
+# selfheal). Naming one of their tags with --tags also runs it.
+validation_disruptive: false
+
+# Namespaces and objects of the demo.
+validation_router_namespace: maas-routing
+validation_models_namespace: local-models
+validation_observability_namespace: observability
+validation_argocd_namespace: openshift-gitops
+validation_root_app: sovereign-selfheal
+
+# Public route of the router: https://<prefix>.<apps domain>/v1/chat/completions
+validation_router_host_prefix: router
+
+# API keys of the tiers, generated in the cluster by ESO (Secret name, key api_key).
+validation_key_secrets:
+  research: apikey-research-1
+  legal: apikey-legal-1
+
+# Values of the root Application used when a key is missing (defaults of gitops
+# bootstrap/values.yaml).
+validation_profile_defaults:
+  modelProfile: gpu
+  sota: {enabled: false}
+  classifier: {mode: local}
+  observability: {enabled: true}
+  secretStore: {enabled: false}
+
+# The router answers with a self-signed certificate on RHDP test clusters.
+validation_validate_certs: false

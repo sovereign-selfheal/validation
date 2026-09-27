@@ -1,0 +1,23 @@
+---
+# Temporary namespace of the probe pod (created and deleted by this role). It has no
+# NetworkPolicy, like any other namespace of a user of the cluster.
+validate_isolation_namespace: validation-probe
+# Any image with bash and coreutils (timeout).
+validate_isolation_image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+validate_isolation_connect_timeout: 5
+
+# Pods that must not be reachable from another namespace: namespace, label selector, port.
+validate_isolation_targets:
+  - {name: litellm, namespace: maas-routing, selector: app=litellm, port: 4000}
+  - {name: presidio, namespace: maas-routing, selector: app=presidio-analyzer, port: 3000}
+  - {name: local model predictor, namespace: local-models, selector: component=predictor, port: 8080}
+
+# Positive control: the probe must reach this address, else the probe itself is broken.
+validate_isolation_control: kubernetes.default.svc:443
+
+# Presidio must have no egress at all: tested from inside a Presidio pod (python).
+validate_isolation_presidio_selector: app=presidio-analyzer
+validate_isolation_presidio_container: presidio-analyzer
+validate_isolation_egress_ip: 1.1.1.1
+validate_isolation_egress_port: 443
+validate_isolation_egress_dns: quay.io

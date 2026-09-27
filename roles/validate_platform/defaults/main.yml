@@ -1,0 +1,47 @@
+---
+# Operators installed by the ansible repo (group_vars/all/main.yml there). `profile` limits an
+# entry to the gpu profile or to observability_enabled.
+validate_platform_operators:
+  - {package: openshift-gitops-operator}
+  - {package: openshift-cert-manager-operator}
+  - {package: openshift-external-secrets-operator}
+  - {package: rhcl-operator}
+  - {package: authorino-operator}
+  - {package: limitador-operator}
+  - {package: dns-operator}
+  - {package: rhods-operator}
+  - {package: nfd, profile: gpu}
+  - {package: gpu-operator-certified, profile: gpu}
+  - {package: opentelemetry-product, profile: observability}
+  - {package: tempo-product, profile: observability}
+  - {package: cluster-observability-operator, profile: observability}
+
+# Ingress (ansible repo, roles/ingress_gateway).
+validate_platform_ingress_namespace: openshift-ingress
+validate_platform_gateway_name: openshift-ai-inference
+validate_platform_gateway_replicas: 2
+validate_platform_route_name: maas-router
+validate_platform_route_timeout: 10m
+# AWS Classic load balancer idle timeout; the API may return 10m or 10m0s.
+validate_platform_lb_idle_timeout_regex: "^10m(0s)?$"
+
+# Workloads of the gitops repo that must run with high availability.
+validate_platform_ha_deployments:
+  - {name: litellm, selector: app=litellm}
+  - {name: presidio-analyzer, selector: app=presidio-analyzer}
+validate_platform_min_replicas: 2
+validate_platform_pdbs: [litellm, presidio-analyzer]
+validate_platform_authorino_min_replicas: 2
+
+# InferenceService expected for each model profile (gitops localModel.profiles).
+validate_platform_isvc_by_profile:
+  gpu: granite-local
+  cpu: qwen25-05b-local
+
+# Secret store of ESO (ansible repo, roles/secrets_bootstrap).
+validate_platform_secret_store: sovereign-selfheal
+
+# Observability objects (gitops component observability, ansible UIPlugins).
+validate_platform_tempo_name: tempo
+validate_platform_collector_deployment: otel-collector
+validate_platform_uiplugins: [distributed-tracing, monitoring]

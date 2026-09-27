@@ -1,0 +1,91 @@
+---
+- name: Read the default IngressController
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: IngressController
+    namespace: openshift-ingress-operator
+    name: default
+  register: validate_platform_ingresscontroller
+
+# Long SOTA answers (up to ~3 minutes) need more than the 60 s default of the AWS Classic ELB.
+- name: Record P7 (load balancer idle timeout)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _aws: >-
+      {{ validate_platform_ingresscontroller.resources[0].spec.endpointPublishingStrategy.loadBalancer.providerParameters.aws
+         | default({}) }}
+    _timeout: "{{ _aws.classicLoadBalancer.connectionIdleTimeout | default('') }}"
+    _r:
+      group: platform
+      id: P7
+      name: ingress load balancer idle timeout 10m
+      status: >-
+        {{ 'SKIP' if _aws.type | default('') != 'Classic'
+           else ('PASS' if _timeout is match(validate_platform_lb_idle_timeout_regex) else 'FAIL') }}
+      detail: >-
+        {{ 'no AWS Classic load balancer' if _aws.type | default('') != 'Classic'
+           else 'connectionIdleTimeout: ' ~ (_timeout or 'default (60s)') }}
+
+- name: Read the router Route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: "{{ validate_platform_ingress_namespace }}"
+    name: "{{ validate_platform_route_name }}"
+  register: validate_platform_route
+
+- name: Record P8 (router Route)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _route: "{{ validate_platform_route.resources[0] | default({}) }}"
+    _host: "{{ _route.spec.host | default('') }}"
+    _timeout: "{{ _route.metadata.annotations['haproxy.router.openshift.io/timeout'] | default('') }}"
+    _want_host: "{{ validation_router_host_prefix }}.{{ validation_ctx.domain }}"
+    _r:
+      group: platform
+      id: P8
+      name: Route {{ validate_platform_route_name }} (host, timeout {{ validate_platform_route_timeout }})
+      status: "{{ 'PASS' if _host == _want_host and _timeout == validate_platform_route_timeout else 'FAIL' }}"
+      detail: "{{ 'Route not found' if not _route else 'host ' ~ _host ~ ', timeout ' ~ (_timeout or 'default') }}"
+
+- name: Read the inference Gateway
+  kubernetes.core.k8s_info:
+    api_version: gateway.networking.k8s.io/v1
+    kind: Gateway
+    namespace: "{{ validate_platform_ingress_namespace }}"
+    name: "{{ validate_platform_gateway_name }}"
+  register: validate_platform_gateway
+
+- name: Read the HorizontalPodAutoscalers of the ingress namespace
+  kubernetes.core.k8s_info:
+    api_version: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    namespace: "{{ validate_platform_ingress_namespace }}"
+  register: validate_platform_hpas
+
+# The gateway HPA must not scale down during a demo: a scale-down cut long SOTA calls
+# (fixed in the ansible repo with min = max = 2).
+- name: Record P9 (inference Gateway)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _gw: "{{ validate_platform_gateway.resources[0] | default({}) }}"
+    _programmed: "{{ _gw | condition_status('Programmed') }}"
+    _hpa: >-
+      {{ validate_platform_hpas.resources
+         | selectattr('spec.scaleTargetRef.name', 'match', validate_platform_gateway_name) | first | default({}) }}
+    _min: "{{ _hpa.spec.minReplicas | default(0) | int }}"
+    _max: "{{ _hpa.spec.maxReplicas | default(0) | int }}"
+    _fixed: "{{ _min | int == validate_platform_gateway_replicas and _max | int == validate_platform_gateway_replicas }}"
+    _r:
+      group: platform
+      id: P9
+      name: Gateway {{ validate_platform_gateway_name }} programmed, HPA fixed at {{ validate_platform_gateway_replicas }}
+      status: >-
+        {{ 'FAIL' if _programmed != 'True'
+           else ('PASS' if _fixed | bool else ('WARN' if not _hpa else 'FAIL')) }}
+      detail: >-
+        Programmed={{ _programmed }},
+        {{ 'HPA not found' if not _hpa else 'HPA ' ~ _hpa.metadata.name ~ ' min ' ~ _min ~ ' max ' ~ _max }}

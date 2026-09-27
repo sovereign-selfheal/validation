@@ -1,0 +1,41 @@
+---
+- name: Read the Tempo instance
+  kubernetes.core.k8s_info:
+    api_version: tempo.grafana.com/v1alpha1
+    kind: TempoMonolithic
+    namespace: "{{ validation_observability_namespace }}"
+    name: "{{ validate_platform_tempo_name }}"
+  register: validate_platform_tempo
+
+- name: Read the OpenTelemetry collector
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ validation_observability_namespace }}"
+    name: "{{ validate_platform_collector_deployment }}"
+  register: validate_platform_collector
+
+- name: Read the console UIPlugins
+  kubernetes.core.k8s_info:
+    api_version: observability.openshift.io/v1alpha1
+    kind: UIPlugin
+  register: validate_platform_uiplugins_info
+
+- name: Record P16 (observability)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _tempo_ready: "{{ validate_platform_tempo.resources[0] | default({}) | condition_status('Ready') }}"
+    _collector: "{{ validate_platform_collector.resources[0] | default({}) }}"
+    _collector_ready: "{{ _collector.status.readyReplicas | default(0) | int }}"
+    _plugins_missing: >-
+      {{ validate_platform_uiplugins | difference(validate_platform_uiplugins_info.resources | map(attribute='metadata.name')) }}
+    _r:
+      group: platform
+      id: P16
+      name: Tempo, OpenTelemetry collector and console plugins ready
+      status: >-
+        {{ 'PASS' if _tempo_ready == 'True' and _collector_ready | int > 0 and _plugins_missing | length == 0 else 'FAIL' }}
+      detail: >-
+        Tempo Ready={{ _tempo_ready }}, collector {{ _collector_ready }} ready replica(s),
+        UIPlugins {{ 'present' if not _plugins_missing else 'missing: ' ~ _plugins_missing | join(', ') }}

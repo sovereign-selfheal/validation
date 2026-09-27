@@ -1,0 +1,98 @@
+---
+# Read everything the checks need from the cluster: apps domain, cluster name, profile of
+# the root Application, API keys. Fails early when the demo is not deployed.
+- name: Start the validation
+  ansible.builtin.debug:
+    msg: >-
+      Validating the demo (root Application {{ validation_argocd_namespace }}/{{ validation_root_app }},
+      router namespace {{ validation_router_namespace }}, disruptive groups
+      {{ 'on' if validation_disruptive | bool else 'off' }})
+
+- name: Read the apps domain
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Ingress
+    name: cluster
+  register: validation_ingress_config
+
+- name: Read the cluster infrastructure
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: Infrastructure
+    name: cluster
+  register: validation_infrastructure
+
+- name: Read the root Application
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    namespace: "{{ validation_argocd_namespace }}"
+    name: "{{ validation_root_app }}"
+  register: validation_root_app_info
+
+- name: Check that the demo is deployed
+  ansible.builtin.assert:
+    that:
+      - validation_ingress_config.resources | length == 1
+      - validation_root_app_info.resources | length == 1
+    fail_msg: >-
+      Root Application {{ validation_argocd_namespace }}/{{ validation_root_app }} not found:
+      run playbooks/site.yml of the ansible repo first (or check $KUBECONFIG).
+    quiet: true
+
+- name: Read the API keys of the tiers
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    namespace: "{{ validation_router_namespace }}"
+    name: "{{ item.value }}"
+  loop: "{{ validation_key_secrets | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: validation_key_info
+  no_log: true
+
+- name: Set the validation context
+  ansible.builtin.set_fact:
+    validation_ctx:
+      cluster: "{{ _infra.status.infrastructureName | default('unknown') }}"
+      platform: "{{ _infra.status.platformStatus.type | default('unknown') }}"
+      domain: "{{ _domain }}"
+      url: "https://{{ validation_router_host_prefix }}.{{ _domain }}/v1/chat/completions"
+      model_profile: "{{ _values.modelProfile }}"
+      sota_enabled: "{{ _values.sota.enabled | bool }}"
+      classifier_mode: "{{ _values.classifier.mode }}"
+      observability_enabled: "{{ _values.observability.enabled | bool }}"
+      secret_store_enabled: "{{ _values.secretStore.enabled | bool }}"
+    validation_results: []
+    validation_seen_decisions: []
+  vars:
+    _infra: "{{ validation_infrastructure.resources[0] | default({}) }}"
+    _domain: "{{ validation_ingress_config.resources[0].spec.domain }}"
+    _values: >-
+      {{ validation_profile_defaults
+         | combine(validation_root_app_info.resources[0].spec.source.helm.valuesObject | default({}), recursive=true) }}
+
+- name: Keep the API keys (not logged)
+  ansible.builtin.set_fact:
+    validation_keys: >-
+      {{ dict(validation_key_info.results
+              | selectattr('resources', 'truthy')
+              | map(attribute='item.key')
+              | zip(validation_key_info.results
+                    | selectattr('resources', 'truthy')
+                    | map(attribute='resources.0.data.api_key')
+                    | map('b64decode'))) }}
+  no_log: true
+
+- name: Check that every API key was found
+  ansible.builtin.assert:
+    that: validation_keys.keys() | length == validation_key_secrets | length
+    fail_msg: >-
+      API key Secrets missing in {{ validation_router_namespace }}: expected
+      {{ validation_key_secrets.values() | join(', ') }} (ESO creates them; check the ExternalSecrets).
+    quiet: true
+
+- name: Show the validation context
+  ansible.builtin.debug:
+    var: validation_ctx

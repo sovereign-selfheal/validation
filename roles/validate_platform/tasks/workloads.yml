@@ -1,0 +1,150 @@
+---
+- name: Read the Argo CD Applications
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1alpha1
+    kind: Application
+    namespace: "{{ validation_argocd_namespace }}"
+  register: validate_platform_apps
+
+- name: Record P10 (Argo CD Applications)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _apps: "{{ validate_platform_apps.resources }}"
+    _bad: >-
+      {{ _apps | rejectattr('status.sync.status', 'defined') | map(attribute='metadata.name') | list
+         + _apps | selectattr('status.sync.status', 'defined')
+           | rejectattr('status.sync.status', 'equalto', 'Synced') | map(attribute='metadata.name') | list
+         + _apps | selectattr('status.health.status', 'defined')
+           | rejectattr('status.health.status', 'equalto', 'Healthy') | map(attribute='metadata.name') | list }}
+    _r:
+      group: platform
+      id: P10
+      name: Argo CD Applications Synced and Healthy
+      status: "{{ 'PASS' if _apps | length > 0 and _bad | length == 0 else 'FAIL' }}"
+      detail: >-
+        {{ _apps | length }} Applications{{ ', not Synced/Healthy: ' ~ (_bad | unique | join(', ')) if _bad else '' }}
+
+- name: Read the pods of the HA deployments
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validation_router_namespace }}"
+    label_selectors: ["{{ item.selector }}"]
+  loop: "{{ validate_platform_ha_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: validate_platform_ha_pods
+
+# Anti-affinity is "preferred": pods on the same node is a warning, not a failure.
+- name: Record P11 (HA replicas)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _ready: "{{ item.resources | ready_pods }}"
+    _ready_count: "{{ _ready | length }}"
+    _nodes: "{{ _ready | map(attribute='spec.nodeName') | unique | list }}"
+    _r:
+      group: platform
+      id: "P11-{{ item.item.name }}"
+      name: "{{ item.item.name }}: at least {{ validate_platform_min_replicas }} Ready replicas on different nodes"
+      status: >-
+        {{ 'FAIL' if _ready_count | int < validate_platform_min_replicas
+           else ('PASS' if _nodes | length >= validate_platform_min_replicas else 'WARN') }}
+      detail: "{{ _ready_count }} Ready on {{ _nodes | length }} node(s)"
+  loop: "{{ validate_platform_ha_pods.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Read the PodDisruptionBudgets
+  kubernetes.core.k8s_info:
+    api_version: policy/v1
+    kind: PodDisruptionBudget
+    namespace: "{{ validation_router_namespace }}"
+  register: validate_platform_pdbs_info
+
+- name: Record P12 (PodDisruptionBudgets)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _missing: "{{ validate_platform_pdbs | difference(validate_platform_pdbs_info.resources | map(attribute='metadata.name')) }}"
+    _r:
+      group: platform
+      id: P12
+      name: PodDisruptionBudgets present
+      status: "{{ 'PASS' if _missing | length == 0 else 'FAIL' }}"
+      detail: "{{ 'present: ' ~ validate_platform_pdbs | join(', ') if not _missing else 'missing: ' ~ _missing | join(', ') }}"
+
+- name: Read the Authorino instances
+  kubernetes.core.k8s_info:
+    api_version: operator.authorino.kuadrant.io/v1beta1
+    kind: Authorino
+  register: validate_platform_authorino
+
+- name: Record P13 (Authorino replicas)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _replicas: "{{ validate_platform_authorino.resources | map(attribute='spec.replicas') | map('default', 1) | map('int') | list }}"
+    _r:
+      group: platform
+      id: P13
+      name: Authorino with at least {{ validate_platform_authorino_min_replicas }} replicas
+      status: >-
+        {{ 'PASS' if _replicas | length > 0 and _replicas | min >= validate_platform_authorino_min_replicas else 'FAIL' }}
+      detail: "{{ 'no Authorino' if not _replicas else 'replicas: ' ~ _replicas | join(', ') }}"
+
+- name: Read the InferenceServices
+  kubernetes.core.k8s_info:
+    api_version: serving.kserve.io/v1beta1
+    kind: InferenceService
+    namespace: "{{ validation_models_namespace }}"
+  register: validate_platform_isvcs
+
+- name: Record P14 (local model Ready)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _name: "{{ validate_platform_isvc_by_profile[validation_ctx.model_profile] | default('') }}"
+    _isvc: "{{ validate_platform_isvcs.resources | selectattr('metadata.name', 'equalto', _name) | first | default({}) }}"
+    _ready: "{{ _isvc | condition_status('Ready') }}"
+    _r:
+      group: platform
+      id: P14
+      name: InferenceService {{ _name }} Ready ({{ validation_ctx.model_profile }} profile)
+      status: "{{ 'PASS' if _ready == 'True' else 'FAIL' }}"
+      detail: "{{ 'not found' if not _isvc else 'Ready=' ~ _ready ~ ', URL ' ~ (_isvc.status.url | default('-')) }}"
+
+- name: Read the ExternalSecrets
+  kubernetes.core.k8s_info:
+    api_version: external-secrets.io/v1
+    kind: ExternalSecret
+    namespace: "{{ validation_router_namespace }}"
+  register: validate_platform_externalsecrets
+
+- name: Read the ClusterSecretStore
+  kubernetes.core.k8s_info:
+    api_version: external-secrets.io/v1
+    kind: ClusterSecretStore
+    name: "{{ validate_platform_secret_store }}"
+  register: validate_platform_secretstore
+
+- name: Record P15 (secrets)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _es: "{{ validate_platform_externalsecrets.resources }}"
+    _not_ready: "{{ _es | names_not_in_condition('Ready') }}"
+    _store: "{{ validate_platform_secretstore.resources[0] | default({}) }}"
+    _store_ready: "{{ _store | condition_status('Ready') }}"
+    _store_ok: "{{ not validation_ctx.secret_store_enabled | bool or _store_ready == 'True' }}"
+    _r:
+      group: platform
+      id: P15
+      name: ExternalSecrets and ClusterSecretStore Ready
+      status: "{{ 'PASS' if _es | length > 0 and _not_ready | length == 0 and _store_ok | bool else 'FAIL' }}"
+      detail: >-
+        {{ _es | length - _not_ready | length }}/{{ _es | length }} ExternalSecrets Ready{{
+        ' (not Ready: ' ~ _not_ready | join(', ') ~ ')' if _not_ready else '' }},
+        store {{ validate_platform_secret_store }}: {{ 'Ready=' ~ _store_ready
+        if validation_ctx.secret_store_enabled | bool else 'not used (secretStore.enabled false)' }}

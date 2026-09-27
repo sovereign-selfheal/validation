@@ -1,0 +1,52 @@
+---
+# Print the results, write them as JSON and fail when a check failed.
+- name: Count the results
+  ansible.builtin.set_fact:
+    validate_report_counts:
+      total: "{{ _results | length }}"
+      pass: "{{ _results | selectattr('status', 'equalto', 'PASS') | list | length }}"
+      fail: "{{ _results | selectattr('status', 'equalto', 'FAIL') | list | length }}"
+      warn: "{{ _results | selectattr('status', 'equalto', 'WARN') | list | length }}"
+      skip: "{{ _results | selectattr('status', 'equalto', 'SKIP') | list | length }}"
+  vars:
+    _results: "{{ validation_results | default([]) }}"
+
+- name: Show the results
+  ansible.builtin.debug:
+    msg: "{{ validation_results | default([]) | validation_lines + [_summary] }}"
+  vars:
+    _summary: >-
+      {{ validate_report_counts.pass }}/{{ validate_report_counts.total }} passed,
+      {{ validate_report_counts.fail }} failed, {{ validate_report_counts.warn }} warnings,
+      {{ validate_report_counts.skip }} skipped
+
+# The report is a local file: it does not change the cluster, so it is not reported as a change.
+- name: Create the report directory
+  ansible.builtin.file:
+    path: "{{ validate_report_dir }}"
+    state: directory
+    mode: "0750"
+  changed_when: false
+
+- name: Write the JSON report
+  ansible.builtin.copy:
+    dest: "{{ validate_report_dir }}/validation-{{ validation_ctx.cluster | default('unknown') }}-{{ _ts }}.json"
+    content: "{{ _report | to_nice_json }}\n"
+    mode: "0640"
+  changed_when: false
+  vars:
+    _ts: "{{ now(utc=true, fmt='%Y%m%dT%H%M%SZ') }}"
+    _report:
+      generated: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
+      context: "{{ validation_ctx | default({}) }}"
+      disruptive: "{{ validation_disruptive | bool }}"
+      tags: "{{ ansible_run_tags }}"
+      counts: "{{ validate_report_counts }}"
+      results: "{{ validation_results | default([]) }}"
+
+- name: Check that no check failed
+  ansible.builtin.assert:
+    that: validate_report_counts.fail | int == 0
+    fail_msg: "{{ validate_report_counts.fail }} check(s) failed: see the FAIL lines above"
+    success_msg: "No failed checks"
+  when: validate_report_fail | bool

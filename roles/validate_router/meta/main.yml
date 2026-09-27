@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: validate_router
+  namespace: sovereign_selfheal
+  author: sovereign-selfheal demo team
+  description: Access, routing and demo checks through the public router route
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: GenericLinux
+      versions: [all]
+dependencies: []

@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: validate_context
+  namespace: sovereign_selfheal
+  author: sovereign-selfheal demo team
+  description: Reads the cluster, the profile of the demo and the API keys for the validation
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: GenericLinux
+      versions: [all]
+dependencies: []

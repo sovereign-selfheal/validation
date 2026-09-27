@@ -1,0 +1,151 @@
+---
+# NetworkPolicy isolation: a probe pod in a temporary namespace must not reach LiteLLM,
+# Presidio or the local model; Presidio must have no egress (by IP or DNS).
+# Creates and deletes the probe namespace: these tasks report changes.
+- name: Start the isolation checks
+  ansible.builtin.debug:
+    msg: >-
+      Isolation checks from the temporary namespace {{ validate_isolation_namespace }}
+      ({{ validate_isolation_targets | map(attribute='name') | join(', ') }}), Presidio egress
+
+- name: Read the pods to probe
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ item.namespace }}"
+    label_selectors: ["{{ item.selector }}"]
+    field_selectors: [status.phase=Running]
+  loop: "{{ validate_isolation_targets }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: validate_isolation_target_pods
+
+- name: Probe from another namespace
+  block:
+    - name: Create the probe namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: "{{ validate_isolation_namespace }}"
+            labels:
+              app.kubernetes.io/part-of: sovereign-selfheal-validation
+
+    - name: Start the probe pod
+      kubernetes.core.k8s:
+        state: present
+        wait: true
+        wait_condition: {type: Ready, status: "True"}
+        wait_timeout: 300
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: probe
+            namespace: "{{ validate_isolation_namespace }}"
+          spec:
+            terminationGracePeriodSeconds: 0
+            securityContext:
+              runAsNonRoot: true
+              seccompProfile: {type: RuntimeDefault}
+            containers:
+              - name: probe
+                image: "{{ validate_isolation_image }}"
+                command: [sleep, infinity]
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities: {drop: [ALL]}
+
+    # One exec for all targets: "<ip>:<port> <rc>" per line; rc 0 = connected.
+    - name: Try to connect from the probe
+      kubernetes.core.k8s_exec:
+        namespace: "{{ validate_isolation_namespace }}"
+        pod: probe
+        command: >-
+          bash -c 'for t in {{ ([validate_isolation_control] + _addresses) | join(' ') }}; do
+          timeout {{ validate_isolation_connect_timeout }} bash -c "exec 3<>/dev/tcp/${t%:*}/${t##*:}" 2>/dev/null;
+          echo "$t $?"; done'
+      vars:
+        _addresses: >-
+          {{ validate_isolation_target_pods.results
+             | map(attribute='resources') | zip(validate_isolation_targets | map(attribute='port'))
+             | map('validate_isolation_addresses') | flatten }}
+      register: validate_isolation_probe
+      changed_when: false
+
+    - name: Record the isolation results
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + [_control] + _results }}"
+      vars:
+        _rc: "{{ validate_isolation_probe.stdout_lines | map('split', ' ') | items2dict(key_name=0, value_name=1) }}"
+        _control_ok: "{{ _rc[validate_isolation_control] | default('x') == '0' }}"
+        _control:
+          group: isolation
+          id: I0
+          name: probe pod has network (reaches {{ validate_isolation_control }})
+          status: "{{ 'PASS' if _control_ok else 'FAIL' }}"
+          detail: "rc {{ _rc[validate_isolation_control] | default('none') }}"
+        _results: >-
+          {{ validate_isolation_target_pods.results
+             | validate_isolation_results(validate_isolation_targets, _rc, _control_ok) }}
+  always:
+    - name: Delete the probe namespace
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Namespace
+        name: "{{ validate_isolation_namespace }}"
+        wait: true
+        wait_timeout: 300
+
+- name: Read the Presidio pods
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validation_router_namespace }}"
+    label_selectors: ["{{ validate_isolation_presidio_selector }}"]
+    field_selectors: [status.phase=Running]
+  register: validate_isolation_presidio
+
+# Prints "ip <result>" and "dns <result>"; the result is "blocked" or "open".
+- name: Try egress from a Presidio pod
+  kubernetes.core.k8s_exec:
+    namespace: "{{ validation_router_namespace }}"
+    pod: "{{ validate_isolation_presidio.resources[0].metadata.name }}"
+    container: "{{ validate_isolation_presidio_container }}"
+    command: |
+      python -c "
+      import socket
+      s = socket.socket()
+      s.settimeout({{ validate_isolation_connect_timeout }})
+      print('ip', 'open' if s.connect_ex(('{{ validate_isolation_egress_ip }}', {{ validate_isolation_egress_port }})) == 0 else 'blocked')
+      try:
+          socket.getaddrinfo('{{ validate_isolation_egress_dns }}', 443)
+          print('dns open')
+      except OSError:
+          print('dns blocked')
+      "
+  register: validate_isolation_egress
+  changed_when: false
+  failed_when: false
+  when: validate_isolation_presidio.resources | length > 0
+
+- name: Record the Presidio egress results
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_ip, _dns] }}"
+  vars:
+    _out: "{{ validate_isolation_egress.stdout_lines | default([]) | map('split', ' ') | items2dict(key_name=0, value_name=1) }}"
+    _ip:
+      group: isolation
+      id: I4
+      name: Presidio has no egress by IP ({{ validate_isolation_egress_ip }}:{{ validate_isolation_egress_port }})
+      status: "{{ 'PASS' if _out.ip | default('') == 'blocked' else 'FAIL' }}"
+      detail: "{{ _out.ip | default('no result: ' ~ (validate_isolation_egress.stderr | default('no Presidio pod'))[:120]) }}"
+    _dns:
+      group: isolation
+      id: I5
+      name: Presidio cannot resolve names ({{ validate_isolation_egress_dns }})
+      status: "{{ 'PASS' if _out.dns | default('') == 'blocked' else 'FAIL' }}"
+      detail: "{{ _out.dns | default('no result') }}"

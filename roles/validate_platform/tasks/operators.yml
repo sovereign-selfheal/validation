@@ -1,0 +1,104 @@
+---
+- name: Read the Subscriptions
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+  register: validate_platform_subs
+
+- name: Select the Subscriptions of the demo operators
+  ansible.builtin.set_fact:
+    validate_platform_expected: "{{ _expected }}"
+    validate_platform_demo_subs: >-
+      {{ validate_platform_subs.resources | selectattr('spec.name', 'in', _expected) | list }}
+  vars:
+    _profiles: >-
+      {{ [''] + (['gpu'] if validation_ctx.model_profile == 'gpu' else [])
+         + (['observability'] if validation_ctx.observability_enabled | bool else []) }}
+    _expected: >-
+      {{ validate_platform_operators | selectattr('profile', 'undefined') | map(attribute='package') | list
+         + validate_platform_operators | selectattr('profile', 'defined') | selectattr('profile', 'in', _profiles)
+           | map(attribute='package') | list }}
+
+- name: Record P1 (operators subscribed)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _missing: "{{ validate_platform_expected | difference(validate_platform_demo_subs | map(attribute='spec.name')) }}"
+    _r:
+      group: platform
+      id: P1
+      name: demo operators subscribed
+      status: "{{ 'PASS' if _missing | length == 0 else 'FAIL' }}"
+      detail: >-
+        {{ (validate_platform_expected | length) }} expected{{ ', missing: ' ~ _missing | join(', ') if _missing else '' }}
+
+- name: Read the installed CSVs
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: "{{ item.metadata.namespace }}"
+    name: "{{ item.status.installedCSV | default('none') }}"
+  loop: "{{ validate_platform_demo_subs }}"
+  loop_control:
+    label: "{{ item.spec.name }}"
+  register: validate_platform_csvs
+
+- name: Record P2 (CSV Succeeded)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _bad: >-
+      {{ validate_platform_csvs.results
+         | rejectattr('resources.0.status.phase', 'defined')
+         | map(attribute='item.spec.name') | list
+         + validate_platform_csvs.results
+         | selectattr('resources.0.status.phase', 'defined')
+         | rejectattr('resources.0.status.phase', 'equalto', 'Succeeded')
+         | map(attribute='item.spec.name') | list }}
+    _r:
+      group: platform
+      id: P2
+      name: operator CSVs Succeeded
+      status: "{{ 'PASS' if _bad | length == 0 else 'FAIL' }}"
+      detail: >-
+        {{ validate_platform_csvs.results | length - _bad | length }}/{{ validate_platform_csvs.results | length }}
+        Succeeded{{ ', not Succeeded: ' ~ _bad | join(', ') if _bad else '' }}
+
+- name: Record P3 (Manual approval)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _auto: >-
+      {{ validate_platform_demo_subs | rejectattr('spec.installPlanApproval', 'equalto', 'Manual')
+         | map(attribute='spec.name') | list }}
+    _r:
+      group: platform
+      id: P3
+      name: demo Subscriptions use Manual approval
+      status: "{{ 'PASS' if _auto | length == 0 else 'FAIL' }}"
+      detail: "{{ 'all Manual' if not _auto else 'not Manual: ' ~ _auto | join(', ') }}"
+
+- name: Read the InstallPlans
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: InstallPlan
+  register: validate_platform_installplans
+
+# Pending InstallPlans for newer versions are expected (pinning policy): a warning, not a failure.
+- name: Record P4 (pending InstallPlans)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _namespaces: "{{ validate_platform_demo_subs | map(attribute='metadata.namespace') | unique }}"
+    _pending: >-
+      {{ validate_platform_installplans.resources
+         | selectattr('metadata.namespace', 'in', _namespaces)
+         | rejectattr('spec.approved')
+         | map(attribute='spec.clusterServiceVersionNames') | flatten | unique | list }}
+    _r:
+      group: platform
+      id: P4
+      name: no unapproved InstallPlans
+      status: "{{ 'PASS' if _pending | length == 0 else 'WARN' }}"
+      detail: >-
+        {{ 'none' if not _pending else 'left unapproved by the pinning policy: ' ~ _pending | join(', ') }}

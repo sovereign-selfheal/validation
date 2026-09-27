@@ -1,0 +1,40 @@
+---
+- name: Read the GPU nodes
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Node
+    label_selectors: [node-role.kubernetes.io/gpu]
+  register: validate_platform_gpu_nodes
+
+- name: Record P5 (GPU node ready)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _gpus: >-
+      {{ validate_platform_gpu_nodes.resources
+         | map(attribute='status.allocatable') | map('dict2items') | flatten
+         | selectattr('key', 'equalto', 'nvidia.com/gpu') | map(attribute='value') | map('int') | sum }}
+    _r:
+      group: platform
+      id: P5
+      name: GPU node with allocatable nvidia.com/gpu
+      status: "{{ 'PASS' if _gpus | int >= 1 else 'FAIL' }}"
+      detail: "{{ validate_platform_gpu_nodes.resources | length }} GPU node(s), {{ _gpus }} GPU(s) allocatable"
+
+- name: Read the ClusterPolicy
+  kubernetes.core.k8s_info:
+    api_version: nvidia.com/v1
+    kind: ClusterPolicy
+  register: validate_platform_clusterpolicy
+
+- name: Record P6 (ClusterPolicy ready)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _states: "{{ validate_platform_clusterpolicy.resources | map(attribute='status.state') | list }}"
+    _r:
+      group: platform
+      id: P6
+      name: NVIDIA ClusterPolicy ready
+      status: "{{ 'PASS' if _states | length > 0 and _states | reject('equalto', 'ready') | list | length == 0 else 'FAIL' }}"
+      detail: "state: {{ _states | join(', ') if _states else 'no ClusterPolicy' }}"

@@ -1,0 +1,54 @@
+---
+# Requests through the public router route; the decision of each request is read from the
+# [policy-router] log lines of LiteLLM. Cases run one at a time.
+- name: Start the router checks
+  ansible.builtin.debug:
+    msg: >-
+      Router checks on {{ validation_ctx.url }} (SOTA {{ 'on' if validation_ctx.sota_enabled | bool else 'off: sota-smart
+      is served by the local model' }}, classifier {{ validation_ctx.classifier_mode }})
+  tags: [access, routing, demo]
+
+- name: Load the routing cases
+  ansible.builtin.include_vars:
+    file: "{{ validate_router_cases_file }}"
+    name: validate_router_cases
+  tags: [routing, demo]
+
+- name: Access cases
+  ansible.builtin.include_tasks:
+    file: case.yml
+    apply:
+      tags: [access]
+  loop: "{{ validate_router_access_cases }}"
+  loop_control:
+    loop_var: validate_router_case
+    label: "{{ validate_router_case.id }}"
+  vars:
+    validate_router_group: access
+  tags: [access]
+
+- name: Routing cases
+  ansible.builtin.include_tasks:
+    file: case.yml
+    apply:
+      tags: [routing]
+  loop: "{{ validate_router_cases.routing_cases }}"
+  loop_control:
+    loop_var: validate_router_case
+    label: "{{ validate_router_case.id }}"
+  vars:
+    validate_router_group: routing
+  tags: [routing]
+
+- name: Demo cases
+  ansible.builtin.include_tasks:
+    file: case.yml
+    apply:
+      tags: [demo]
+  loop: "{{ validate_router_cases.demo_cases }}"
+  loop_control:
+    loop_var: validate_router_case
+    label: "{{ validate_router_case.id }}"
+  vars:
+    validate_router_group: demo
+  tags: [demo]

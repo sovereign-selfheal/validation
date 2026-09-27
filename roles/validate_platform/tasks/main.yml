@@ -1,0 +1,25 @@
+---
+# Read-only checks of the cluster state, ported from infra-checks.sh with assertions.
+# Every check adds one entry to validation_results; nothing here fails the play.
+- name: Start the platform checks
+  ansible.builtin.debug:
+    msg: >-
+      Platform checks: operators, {{ 'GPU, ' if validation_ctx.model_profile == 'gpu' else '' }}ingress,
+      Argo CD, workloads, secrets{{ ', observability' if validation_ctx.observability_enabled | bool else '' }}
+
+- name: Operator checks
+  ansible.builtin.import_tasks: operators.yml
+
+- name: GPU checks
+  ansible.builtin.import_tasks: gpu.yml
+  when: validation_ctx.model_profile == 'gpu'
+
+- name: Ingress checks
+  ansible.builtin.import_tasks: ingress.yml
+
+- name: Argo CD and workload checks
+  ansible.builtin.import_tasks: workloads.yml
+
+- name: Observability checks
+  ansible.builtin.import_tasks: observability.yml
+  when: validation_ctx.observability_enabled | bool

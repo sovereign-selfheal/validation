@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: validate_platform
+  namespace: sovereign_selfheal
+  author: sovereign-selfheal demo team
+  description: Read-only checks of operators, GPU, ingress, Argo CD, workloads, secrets and observability
+  license: Apache-2.0
+  min_ansible_version: "2.20"
+  platforms:
+    - name: GenericLinux
+      versions: [all]
+dependencies: []

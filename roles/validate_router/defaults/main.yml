@@ -1,0 +1,37 @@
+---
+# Cases of the routing and demo groups (prompts and expected decisions).
+validate_router_cases_file: "{{ playbook_dir }}/../cases/routing.yml"
+
+# Request settings.
+validate_router_model: auto
+validate_router_max_tokens: 150
+validate_router_timeout: 300
+
+# Where the routing decision is read: the [policy-router] lines of the LiteLLM pods.
+validate_router_litellm_selector: app=litellm
+validate_router_litellm_container: litellm
+# Seconds to wait for the decision line after the answer (kubelet log latency).
+validate_router_decision_timeout: 10
+
+# Access cases: no key, invalid key, tier from the key and not from a forged header.
+# key: "" = no Authorization header; a literal value = that key; tier = key of that tier.
+validate_router_access_cases:
+  - id: A1
+    name: no API key -> 401
+    prompt: hi
+    key: ""
+    expect: {status: 401}
+  - id: A2
+    name: invalid API key -> 401
+    prompt: hi
+    key: sk-validation-invalid-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    expect: {status: 401}
+  # The legal tier keeps complex prompts local: with a forged "x-team: research" header the
+  # decision must still say team legal. After the legal 429 test (L1) this case gets 429
+  # for up to 10 minutes.
+  - id: A3
+    name: tier from the key, not from the x-team header
+    prompt: Compare in detail, step by step, the main approaches to database sharding and their trade-offs.
+    tier: legal
+    headers: {x-team: research}
+    expect: {routed_to: local-fast, team: legal}

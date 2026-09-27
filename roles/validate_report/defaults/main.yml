@@ -1,0 +1,5 @@
+---
+# Directory of the JSON reports (ignored by git).
+validate_report_dir: "{{ playbook_dir }}/../reports"
+# Fail the play when a check failed. false: report only.
+validate_report_fail: true
