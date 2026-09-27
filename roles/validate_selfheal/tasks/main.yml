@@ -1,0 +1,80 @@
+---
+# Argo CD self-heal: change a managed object by hand and measure how fast Argo CD reverts
+# it. Runs with validation_disruptive=true, or with --tags selfheal.
+- name: Report the skipped self-heal test
+  ansible.builtin.debug:
+    msg: "Self-heal test not run: it changes a managed object. Use -e validation_disruptive=true or --tags selfheal."
+  when: not (validation_disruptive | bool or 'selfheal' in ansible_run_tags)
+
+- name: Run the self-heal test
+  when: validation_disruptive | bool or 'selfheal' in ansible_run_tags
+  block:
+    - name: Start the self-heal test
+      ansible.builtin.debug:
+        msg: >-
+          Changing {{ validate_selfheal_kind }} {{ validation_router_namespace }}/{{ validate_selfheal_name }}
+          (key {{ validate_selfheal_key }}); Argo CD must revert it within {{ validate_selfheal_timeout }} s
+
+    - name: Read the managed object
+      kubernetes.core.k8s_info:
+        api_version: "{{ validate_selfheal_api_version }}"
+        kind: "{{ validate_selfheal_kind }}"
+        namespace: "{{ validation_router_namespace }}"
+        name: "{{ validate_selfheal_name }}"
+      register: validate_selfheal_before
+
+    - name: Keep the original value
+      ansible.builtin.set_fact:
+        validate_selfheal_original: "{{ validate_selfheal_before.resources[0].data[validate_selfheal_key] }}"
+
+    - name: Change the object by hand
+      kubernetes.core.k8s:
+        state: patched
+        api_version: "{{ validate_selfheal_api_version }}"
+        kind: "{{ validate_selfheal_kind }}"
+        namespace: "{{ validation_router_namespace }}"
+        name: "{{ validate_selfheal_name }}"
+        definition:
+          data: "{{ {validate_selfheal_key: validate_selfheal_original ~ '\n' ~ validate_selfheal_marker ~ '\n'} }}"
+
+    - name: Note the time of the change
+      ansible.builtin.set_fact:
+        validate_selfheal_t0: "{{ now(utc=true, fmt='%s.%f') }}"
+
+    - name: Wait for Argo CD to revert the change
+      kubernetes.core.k8s_info:
+        api_version: "{{ validate_selfheal_api_version }}"
+        kind: "{{ validate_selfheal_kind }}"
+        namespace: "{{ validation_router_namespace }}"
+        name: "{{ validate_selfheal_name }}"
+      register: validate_selfheal_after
+      until: validate_selfheal_after.resources[0].data[validate_selfheal_key] == validate_selfheal_original
+      retries: "{{ (validate_selfheal_timeout / 2) | int }}"
+      delay: 2
+      failed_when: false
+
+    - name: Record H1 (Argo CD self-heal)
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + [_r] }}"
+      vars:
+        _reverted: "{{ validate_selfheal_after.resources[0].data[validate_selfheal_key] == validate_selfheal_original }}"
+        _seconds: "{{ (now(utc=true, fmt='%s.%f') | float) - (validate_selfheal_t0 | float) }}"
+        _r:
+          group: selfheal
+          id: H1
+          name: Argo CD reverts a change made by hand
+          status: "{{ 'PASS' if _reverted else 'FAIL' }}"
+          detail: >-
+            {{ 'reverted in about ' ~ ('%.1f' | format(_seconds | float)) ~ ' s (polling every 2 s)'
+               if _reverted else 'not reverted after ' ~ validate_selfheal_timeout ~ ' s: restored by the test' }}
+
+    - name: Restore the object when Argo CD did not
+      kubernetes.core.k8s:
+        state: patched
+        api_version: "{{ validate_selfheal_api_version }}"
+        kind: "{{ validate_selfheal_kind }}"
+        namespace: "{{ validation_router_namespace }}"
+        name: "{{ validate_selfheal_name }}"
+        definition:
+          data: "{{ {validate_selfheal_key: validate_selfheal_original} }}"
+      when: validate_selfheal_after.resources[0].data[validate_selfheal_key] != validate_selfheal_original

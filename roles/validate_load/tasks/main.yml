@@ -1,0 +1,91 @@
+---
+# Long SOTA answers, parallel calls, legal 429 and failover, run by harness/load.py.
+# These groups load or change the cluster: they run with validation_disruptive=true, or
+# when their tag is named with --tags.
+- name: Select the load groups
+  ansible.builtin.set_fact:
+    validate_load_selected: "{{ _requested | reject('equalto', 'sota') | list if _sota_skipped else _requested }}"
+    validate_load_sota_skipped: "{{ _sota_skipped }}"
+  vars:
+    _named: "{{ validate_load_groups | select('in', ansible_run_tags) | list }}"
+    _requested: "{{ _named if _named | length > 0 else (validate_load_groups if validation_disruptive | bool else []) }}"
+    _sota_skipped: "{{ 'sota' in _requested and not validation_ctx.sota_enabled | bool }}"
+  tags: [sota, parallel, legal, failover]
+
+- name: Record the SOTA group as skipped (local-only mode)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _r: {group: sota, id: S, name: SOTA answers, status: SKIP, detail: "sota.enabled is false (local-only mode)"}
+  when: validate_load_sota_skipped | bool
+  tags: [sota]
+
+- name: Report the skipped load groups
+  ansible.builtin.debug:
+    msg: >-
+      Load groups not run ({{ validate_load_groups | join(', ') }}): they load or change the cluster.
+      Run them with -e validation_disruptive=true or name them with --tags.
+  when: validate_load_selected | length == 0 and not validate_load_sota_skipped | bool
+  tags: [sota, parallel, legal, failover]
+
+- name: Run the harness
+  when: validate_load_selected | length > 0
+  tags: [sota, parallel, legal, failover]
+  block:
+    - name: Create a file for the harness report
+      ansible.builtin.tempfile:
+        suffix: .json
+      register: validate_load_report
+      changed_when: false
+
+    - name: Start the load harness (can take 10-20 minutes)
+      ansible.builtin.debug:
+        msg: "harness/load.py --groups {{ validate_load_selected | join(',') }}"
+
+    # no_log: the environment holds the API keys. The failover group deletes pods: a change.
+    - name: Run harness/load.py
+      ansible.builtin.command:
+        argv: >-
+          {{ [ansible_playbook_python, 'harness/load.py',
+              '--url', validation_ctx.url,
+              '--namespace', validation_router_namespace,
+              '--groups', validate_load_selected | join(','),
+              '--report', validate_load_report.path,
+              '--litellm-selector', validate_load_litellm_selector,
+              '--presidio-selector', validate_load_presidio_selector,
+              '--container', validate_load_litellm_container,
+              '--failover-seconds', validate_load_failover_seconds | string]
+             + ([] if validation_validate_certs | bool else ['--insecure']) }}
+        chdir: "{{ playbook_dir }}/.."
+      environment:
+        VALIDATION_KEY_RESEARCH: "{{ validation_keys.research }}"
+        VALIDATION_KEY_LEGAL: "{{ validation_keys.legal }}"
+      register: validate_load_run
+      changed_when: "'failover' in validate_load_selected"
+      failed_when: false
+      no_log: true
+
+    - name: Read the harness report
+      ansible.builtin.slurp:
+        src: "{{ validate_load_report.path }}"
+      register: validate_load_json
+
+    - name: Record the harness results
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + (_results if _results | length > 0 else [_crash]) }}"
+      vars:
+        _raw: "{{ validate_load_json.content | b64decode | trim }}"
+        _results: "{{ _raw | from_json if _raw | length > 0 else [] }}"
+        _crash:
+          group: load
+          id: H
+          name: harness/load.py
+          status: FAIL
+          detail: "no results (rc {{ validate_load_run.rc }}): {{ validate_load_run.stderr_lines | default([]) | last | default('') }}"
+  always:
+    - name: Remove the harness report file
+      ansible.builtin.file:
+        path: "{{ validate_load_report.path }}"
+        state: absent
+      when: validate_load_report.path is defined
+      changed_when: false

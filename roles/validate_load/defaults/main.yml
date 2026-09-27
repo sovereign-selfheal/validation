@@ -1,0 +1,10 @@
+---
+# Groups of harness/load.py, in the order they run (the order matters: legal blocks the
+# legal tier for up to 10 minutes, failover deletes pods).
+validate_load_groups: [sota, parallel, legal, failover]
+# Seconds of traffic during the failover test.
+validate_load_failover_seconds: 75
+# Label selectors of the pods the failover test deletes.
+validate_load_litellm_selector: app=litellm
+validate_load_presidio_selector: app=presidio-analyzer
+validate_load_litellm_container: litellm

@@ -1,0 +1,10 @@
+---
+# Object changed by hand to test the Argo CD self-heal. The default adds a YAML comment to
+# the LiteLLM config: harmless even if a pod restarts before Argo CD reverts it.
+validate_selfheal_api_version: v1
+validate_selfheal_kind: ConfigMap
+validate_selfheal_name: litellm-config
+validate_selfheal_key: config-chain.yaml
+validate_selfheal_marker: "# changed by the validation self-heal test"
+# Seconds to wait for Argo CD to revert the change (earlier runs: 1.7-12 s).
+validate_selfheal_timeout: 120

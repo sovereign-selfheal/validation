@@ -1,0 +1,26 @@
+---
+# Validation of the demo after playbooks/site.yml of the ansible repo.
+#
+#   uv run ansible-playbook playbooks/validate.yml                                # default groups
+#   uv run ansible-playbook playbooks/validate.yml -e validation_disruptive=true  # all groups
+#   uv run ansible-playbook playbooks/validate.yml --tags routing,demo            # some groups
+#
+# Default groups: platform, isolation, access, routing, demo.
+# Disruptive groups (validation_disruptive=true, or named with --tags): sota, parallel,
+# legal, failover, selfheal.
+- name: Validate the Sovereign Self-Healing Platform demo
+  hosts: localhost
+  gather_facts: false
+  roles:
+    - role: validate_context
+      tags: [always]
+    - role: validate_platform
+      tags: [platform]
+    - role: validate_isolation
+      tags: [isolation]
+    - role: validate_router
+    - role: validate_load
+    - role: validate_selfheal
+      tags: [selfheal]
+    - role: validate_report
+      tags: [always]
