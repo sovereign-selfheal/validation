@@ -39,8 +39,8 @@
     _report:
       generated: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ') }}"
       context: "{{ validation_ctx | default({}) }}"
-      disruptive: "{{ validation_disruptive | bool }}"
-      tags: "{{ ansible_run_tags }}"
+      disruptive: "{{ validation_disruptive | default(false) | bool }}"
+      tags: "{{ ansible_run_tags | default([]) }}"
       counts: "{{ validate_report_counts }}"
       results: "{{ validation_results | default([]) }}"
 

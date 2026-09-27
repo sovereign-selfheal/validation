@@ -90,6 +90,17 @@
         _results: >-
           {{ validate_isolation_target_pods.results
              | validate_isolation_results(validate_isolation_targets, _rc, _control_ok) }}
+  rescue:
+    - name: Record the probe failure
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + [_r] }}"
+      vars:
+        _r:
+          group: isolation
+          id: I0
+          name: probe pod started in {{ validate_isolation_namespace }}
+          status: FAIL
+          detail: "{{ (ansible_failed_result.msg | default('probe failed') | string)[:200] }}"
   always:
     - name: Delete the probe namespace
       kubernetes.core.k8s:

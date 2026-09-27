@@ -62,6 +62,7 @@
         exclude: "{{ validation_seen_decisions }}"
         timeout: "{{ validate_router_decision_timeout }}"
       register: validate_router_decision
+      failed_when: false
       when: _want_status | int == 200
 
     - name: "Record {{ validate_router_case.id }}"
@@ -81,7 +82,9 @@
               ~ (' | trace ' ~ _d.trace_id if _d.trace_id is defined else ''))
              if _d else 'no routing decision found in the LiteLLM logs' }}{{
              ' (' ~ _decisions | length ~ ' new decisions: other traffic?)' if _decisions | length > 1 else '' }}
-        _error: "{{ ' ' ~ validate_router_resp.msg | default('') if _status | int == -1 else '' }}"
+        _error: >-
+          {{ ' ' ~ validate_router_resp.msg | default('') if _status | int == -1 else '' }}{{
+             ' | ' ~ validate_router_decision.msg if validate_router_decision.failed | default(false) else '' }}
         _checks:
           - "{{ _status == _want_status | int }}"
           - "{{ _expect.routed_to is undefined or _d.routed_to | default('') == _expect.routed_to }}"
@@ -89,6 +92,7 @@
           - "{{ _expect.team is undefined or _d.team | default('') == _expect.team }}"
           - "{{ _expect.reason_contains | default([]) | reject('in', _reason) | list | length == 0 }}"
           - "{{ _want_status | int != 200 or _d | length > 0 }}"
+          - "{{ not validate_router_decision.failed | default(false) }}"
         _r:
           group: "{{ validate_router_group }}"
           id: "{{ validate_router_case.id }}"

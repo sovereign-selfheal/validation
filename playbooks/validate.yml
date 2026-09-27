@@ -11,16 +11,36 @@
 - name: Validate the Sovereign Self-Healing Platform demo
   hosts: localhost
   gather_facts: false
-  roles:
-    - role: validate_context
-      tags: [always]
-    - role: validate_platform
-      tags: [platform]
-    - role: validate_isolation
-      tags: [isolation]
-    - role: validate_router
-    - role: validate_load
-    - role: validate_selfheal
-      tags: [selfheal]
-    - role: validate_report
-      tags: [always]
+  tasks:
+    # The report runs in "always": the results collected so far are printed and saved even
+    # when a task fails hard (for example the API is not reachable).
+    - name: Run the checks
+      block:
+        - name: Read the cluster, the demo profile and the API keys
+          ansible.builtin.import_role:
+            name: validate_context
+          tags: [always]
+        - name: Platform checks
+          ansible.builtin.import_role:
+            name: validate_platform
+          tags: [platform]
+        - name: Isolation checks
+          ansible.builtin.import_role:
+            name: validate_isolation
+          tags: [isolation]
+        - name: Access, routing and demo checks
+          ansible.builtin.import_role:
+            name: validate_router
+        - name: Load checks (harness/load.py)
+          ansible.builtin.import_role:
+            name: validate_load
+        - name: Argo CD self-heal check
+          ansible.builtin.import_role:
+            name: validate_selfheal
+          tags: [selfheal]
+      always:
+        - name: Report the results
+          ansible.builtin.import_role:
+            name: validate_report
+          when: validation_results is defined
+          tags: [always]
