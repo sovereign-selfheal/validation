@@ -59,7 +59,10 @@ def read_decisions(core_v1, namespace, label_selector, since_seconds, container=
         if container:
             kwargs["container"] = container
         try:
-            text = core_v1.read_namespaced_pod_log(pod.metadata.name, namespace, **kwargs)
+            # Raw response: with a non-ASCII log (the LiteLLM start banner) the client returns
+            # the repr of the bytes ("b'...'") instead of the text.
+            raw = core_v1.read_namespaced_pod_log(pod.metadata.name, namespace, _preload_content=False, **kwargs)
+            text = raw.data.decode("utf-8", errors="replace")
         except ApiException:
             continue  # pod restarting or deleted meanwhile
         for decision in parse_decisions(text):

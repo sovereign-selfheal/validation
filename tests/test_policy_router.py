@@ -60,3 +60,42 @@ def test_key_without_trace_id_ignores_the_timestamp():
     b = dict(a, _ts="2026-09-27T10:00:05Z")
     assert decision_key(a) == decision_key(b)
     assert decision_key(a) != decision_key(dict(a, reason="other"))
+
+
+class _Raw:
+    def __init__(self, data):
+        self.data = data
+
+
+class _Pod:
+    def __init__(self, name):
+        self.metadata = type("M", (), {"name": name})()
+        self.status = type("S", (), {"phase": "Running"})()
+
+
+class _FakeCoreV1:
+    """Two LiteLLM pods; the logs hold non-ASCII bytes like the LiteLLM start banner."""
+
+    def __init__(self, logs):
+        self.logs = logs
+
+    def list_namespaced_pod(self, namespace, label_selector):
+        return type("L", (), {"items": [_Pod(name) for name in self.logs]})()
+
+    def read_namespaced_pod_log(self, name, namespace, _preload_content=True, **kwargs):
+        assert _preload_content is False  # the preloaded text is the repr of the bytes
+        return _Raw(self.logs[name].encode("utf-8"))
+
+
+def test_read_decisions_merges_pods_by_time_and_decodes_utf8():
+    from policy_router import read_decisions
+
+    first = dict(DECISION, trace_id="aaa")
+    second = dict(DECISION, trace_id="bbb", routed_to="sota-smart")
+    core = _FakeCoreV1({
+        "litellm-1": f"2026-09-27T10:00:00Z ██╗ banner\n2026-09-27T10:00:05Z [policy-router] {second}\n",
+        "litellm-2": f"2026-09-27T10:00:01Z [policy-router] {first}\n",
+    })
+    got = read_decisions(core, "maas-routing", "app=litellm", 60, "litellm")
+    assert [d["trace_id"] for d in got] == ["aaa", "bbb"]
+    assert [d["_pod"] for d in got] == ["litellm-2", "litellm-1"]

@@ -73,12 +73,11 @@
         _status: "{{ validate_router_resp.status | default(-1) | int }}"
         _decisions: "{{ validate_router_decision.decisions | default([]) }}"
         _d: "{{ validate_router_decision.decision | default({}) }}"
-        _model: "{{ (validate_router_resp.json | default({})).model | default('-') }}"
         _reason: "{{ _d.reason | default('') }}"
         _secs: "{{ '%.1f' | format(validate_router_resp.elapsed | default(0) | float) }}"
         _route: >-
           {{ ('routed_to=' ~ _d.routed_to | default('-') ~ ' by=' ~ _d.decided_by | default('-')
-              ~ ' team=' ~ _d.team | default('-') ~ ' model=' ~ _model ~ ' | ' ~ _reason[:160]
+              ~ ' team=' ~ _d.team | default('-') ~ ' | ' ~ _reason[:160]
               ~ (' | trace ' ~ _d.trace_id if _d.trace_id is defined else ''))
              if _d else 'no routing decision found in the LiteLLM logs' }}{{
              ' (' ~ _decisions | length ~ ' new decisions: other traffic?)' if _decisions | length > 1 else '' }}
