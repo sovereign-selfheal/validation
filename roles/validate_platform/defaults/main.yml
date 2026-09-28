@@ -1,10 +1,11 @@
 ---
 # Operators installed by the ansible repo (group_vars/all/main.yml there). `profile` limits an
-# entry to the gpu profile or to observability_enabled.
+# entry to the gpu profile, to observability_enabled or to team access (Group present).
 validate_platform_operators:
   - {package: openshift-gitops-operator}
   - {package: openshift-cert-manager-operator}
   - {package: openshift-external-secrets-operator}
+  - {package: rhbk-operator, profile: team}
   - {package: rhcl-operator}
   - {package: authorino-operator}
   - {package: limitador-operator}
@@ -45,3 +46,7 @@ validate_platform_secret_store: sovereign-selfheal
 validate_platform_tempo_name: tempo
 validate_platform_collector_deployment: otel-collector
 validate_platform_uiplugins: [distributed-tracing, monitoring]
+
+# Team access (ansible repo, roles/team_access and roles/argocd_seed).
+validate_platform_team_cluster_role: cluster-admin
+validate_platform_argocd_name: openshift-gitops

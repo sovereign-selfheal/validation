@@ -5,7 +5,8 @@
   ansible.builtin.debug:
     msg: >-
       Platform checks: operators, {{ 'GPU, ' if validation_ctx.model_profile == 'gpu' else '' }}ingress,
-      Argo CD, workloads, secrets{{ ', observability' if validation_ctx.observability_enabled | bool else '' }}
+      Argo CD, workloads, secrets{{ ', observability' if validation_ctx.observability_enabled | bool else '' }}{{
+      ', team access' if validation_ctx.team_access_enabled | bool else '' }}
 
 - name: Operator checks
   ansible.builtin.import_tasks: operators.yml
@@ -23,3 +24,7 @@
 - name: Observability checks
   ansible.builtin.import_tasks: observability.yml
   when: validation_ctx.observability_enabled | bool
+
+- name: Team access checks
+  ansible.builtin.import_tasks: team.yml
+  when: validation_ctx.team_access_enabled | bool
