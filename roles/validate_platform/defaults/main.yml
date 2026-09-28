@@ -36,7 +36,7 @@ validate_platform_authorino_min_replicas: 2
 
 # InferenceService expected for each model profile (gitops localModel.profiles).
 validate_platform_isvc_by_profile:
-  gpu: granite-local
+  gpu: qwen38-local
   cpu: qwen25-05b-local
 
 # Secret store of ESO (ansible repo, roles/secrets_bootstrap).
