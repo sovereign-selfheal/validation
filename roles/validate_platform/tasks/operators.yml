@@ -13,7 +13,8 @@
   vars:
     _profiles: >-
       {{ [''] + (['gpu'] if validation_ctx.model_profile == 'gpu' else [])
-         + (['observability'] if validation_ctx.observability_enabled | bool else []) }}
+         + (['observability'] if validation_ctx.observability_enabled | bool else [])
+         + (['team'] if validation_ctx.team_access_enabled | default(false) | bool else []) }}
     _expected: >-
       {{ validate_platform_operators | selectattr('profile', 'undefined') | map(attribute='package') | list
          + validate_platform_operators | selectattr('profile', 'defined') | selectattr('profile', 'in', _profiles)

@@ -40,6 +40,13 @@
       run playbooks/site.yml of the ansible repo first (or check $KUBECONFIG).
     quiet: true
 
+- name: Read the Group of the team users
+  kubernetes.core.k8s_info:
+    api_version: user.openshift.io/v1
+    kind: Group
+    name: "{{ validation_team_group }}"
+  register: validation_team_group_info
+
 - name: Read the API keys of the tiers
   kubernetes.core.k8s_info:
     api_version: v1
@@ -64,6 +71,7 @@
       classifier_mode: "{{ _values.classifier.mode }}"
       observability_enabled: "{{ _values.observability.enabled | bool }}"
       secret_store_enabled: "{{ _values.secretStore.enabled | bool }}"
+      team_access_enabled: "{{ validation_team_group_info.resources | length > 0 }}"
     validation_results: []
     validation_seen_decisions: []
   vars:

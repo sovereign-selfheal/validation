@@ -12,6 +12,9 @@ validation_models_namespace: local-models
 validation_observability_namespace: observability
 validation_argocd_namespace: openshift-gitops
 validation_root_app: sovereign-selfheal
+# OpenShift Group of the team users (ansible repo, roles/team_access). When it exists, the team
+# access checks run (P17) and the rhbk operator is expected.
+validation_team_group: selfheal-team
 
 # Public route of the router: https://<prefix>.<apps domain>/v1/chat/completions
 validation_router_host_prefix: router

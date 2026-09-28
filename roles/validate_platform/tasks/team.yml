@@ -1,0 +1,65 @@
+---
+# Team access (ansible repo, roles/team_access): the Group has members and the cluster role,
+# an OpenID IdP is configured, the OAuth server is healthy, Argo CD makes the Group admin.
+- name: Read the ClusterRoleBinding of the team Group
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    name: "{{ validation_team_group }}-{{ validate_platform_team_cluster_role }}"
+  register: validate_platform_team_crb
+
+- name: Read the OAuth configuration
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: OAuth
+    name: cluster
+  register: validate_platform_oauth
+
+- name: Read the authentication cluster operator
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterOperator
+    name: authentication
+  register: validate_platform_auth_co
+
+- name: Read the Argo CD instance
+  kubernetes.core.k8s_info:
+    api_version: argoproj.io/v1beta1
+    kind: ArgoCD
+    namespace: "{{ validation_argocd_namespace }}"
+    name: "{{ validate_platform_argocd_name }}"
+  register: validate_platform_argocd
+
+- name: Record P17 (team access)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _members: "{{ validation_team_group_info.resources[0].users | default([], true) | length }}"
+    _crb: "{{ validate_platform_team_crb.resources[0] | default({}) }}"
+    _crb_ok: >-
+      {{ _crb.roleRef.name | default('') == validate_platform_team_cluster_role
+         and (_crb.subjects | default([]) | selectattr('kind', 'equalto', 'Group')
+              | selectattr('name', 'equalto', validation_team_group) | list | length > 0) }}
+    _openid: >-
+      {{ (validate_platform_oauth.resources[0].spec.identityProviders | default([], true))
+         | selectattr('type', 'equalto', 'OpenID') | map(attribute='name') | list }}
+    _co: "{{ validate_platform_auth_co.resources[0] | default({}) }}"
+    _co_ok: >-
+      {{ _co | condition_status('Available') == 'True' and _co | condition_status('Degraded') != 'True' }}
+    _argo_line: "g, {{ validation_team_group }}, role:admin"
+    _argo_ok: >-
+      {{ _argo_line in ((validate_platform_argocd.resources[0].spec.rbac.policy | default('', true)).splitlines()
+                        | map('trim') | list) }}
+    _r:
+      group: platform
+      id: P17
+      name: team access (Group, cluster role, OpenID IdP, Argo CD admin)
+      status: >-
+        {{ 'PASS' if _members | int > 0 and _crb_ok and _openid | length > 0 and _co_ok and _argo_ok
+           else 'FAIL' }}
+      detail: >-
+        Group {{ validation_team_group }}: {{ _members }} member(s);
+        ClusterRoleBinding to {{ validate_platform_team_cluster_role }} {{ 'ok' if _crb_ok else 'missing' }};
+        OpenID IdP {{ _openid | join(', ') if _openid else 'missing' }};
+        authentication operator {{ 'ok' if _co_ok else 'not Available or Degraded' }};
+        Argo CD line {{ 'present' if _argo_ok else 'missing' }}
