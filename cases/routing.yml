@@ -82,10 +82,12 @@ routing_cases:
 
   # The self-heal agents call tools. A short request stays local (efficiency gate); the local
   # model must answer with a tool call and without its reasoning in the text (vLLM
-  # --reasoning-parser and enable_thinking false by default, gitops bootstrap/values.yaml).
+  # --reasoning-parser moves it out of `content`). The model reasons first (thinking on by
+  # default, about 350 tokens here), so the case needs a larger token budget.
   - id: R8
     name: agent tool call -> local, tool call without reasoning text
     prompt: Pod checkout-7f9c in namespace shop is in CrashLoopBackOff. Get its logs.
+    max_tokens: 2000
     tools:
       - type: function
         function:
