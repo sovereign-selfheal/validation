@@ -97,7 +97,9 @@ this repo in the same change set.
 - **`ansible` repo.** Operator packages (`validate_platform_operators`), Route `maas-router` and
   its 10m timeout, the load balancer idle timeout, Gateway `openshift-ai-inference` with its
   HPA fixed at 2, Authorino replicas, the ClusterSecretStore `sovereign-selfheal`, the root
-  Application `openshift-gitops/sovereign-selfheal`.
+  Application `openshift-gitops/sovereign-selfheal`, the Kuadrant metrics of P20 (PodMonitor
+  `kuadrant-system/limitador`, ServiceMonitor `kuadrant-system/authorino`, TelemetryPolicy
+  `openshift-ingress/openshift-ai-inference-labels`, no `istio-pod-monitor`).
 
 ## 6. Out of scope
 

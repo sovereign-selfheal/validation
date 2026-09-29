@@ -30,6 +30,14 @@ validate_platform_lb_idle_timeout_regex: "^10m(0s)?$"
 validate_platform_gateway_proxy_container: istio-proxy
 validate_platform_gateway_wasm_retries: 6
 validate_platform_gateway_wasm_delay: 5
+# P20: Kuadrant metrics (ansible repo: post-install of rhcl and roles/ingress_gateway).
+validate_platform_kuadrant_namespace: kuadrant-system
+validate_platform_limitador_podmonitor: limitador
+validate_platform_authorino_servicemonitor: authorino
+validate_platform_telemetry_policy: openshift-ai-inference-labels
+# Created by spec.observability of the Kuadrant CR, which must stay off on RHCL 1.4.3
+# (it scrapes port 15021 of the gateway pods and TargetDown fires).
+validate_platform_broken_istio_podmonitor: istio-pod-monitor
 
 # Workloads of the gitops repo that must run with high availability.
 validate_platform_ha_deployments:
