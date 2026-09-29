@@ -26,7 +26,7 @@ of the tiers (from the Secrets that ESO creates).
 
 | Tag | Checks | Default |
 |---|---|---|
-| `platform` | P1-P19: operators (CSV `Succeeded`, `Manual` approval, pending InstallPlans), GPU node and ClusterPolicy, load balancer and Route timeouts, inference Gateway and its HPA, Kuadrant wasm module on every gateway pod (P18), Argo CD Applications, HA replicas and PDBs, Authorino, local model and its hardware profile (P19), ESO, observability, team access (P17, only when the Group `selfheal-team` exists) | yes |
+| `platform` | P1-P20: operators (CSV `Succeeded`, `Manual` approval, pending InstallPlans), GPU node and ClusterPolicy, load balancer and Route timeouts, inference Gateway and its HPA, Kuadrant wasm module on every gateway pod (P18), Kuadrant metrics with the `tier` label (P20), Argo CD Applications, HA replicas and PDBs, Authorino, local model and its hardware profile (P19), ESO, observability, team access (P17, only when the Group `selfheal-team` exists) | yes |
 | `isolation` | I0-I5: a probe pod in a temporary namespace cannot reach LiteLLM, Presidio or the local model; Presidio has no egress (IP and DNS) | yes |
 | `access` | A1-A3: no key and invalid key get 401; the tier comes from the key, not from the `x-team` header | yes |
 | `routing` | R1-R8: short, complex, Italian, PII, implicit sensitivity (lexicon and C2 classifier), prompt injection, agent tool call | yes |

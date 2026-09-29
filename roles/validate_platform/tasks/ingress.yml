@@ -162,3 +162,62 @@
            if _failed | length > 0 else '' }}{{
            '; no download attempt: ' ~ (_untried | join(', ')) if _untried | length > 0 else '' }}{{
            '; stats not readable: ' ~ (_unreadable | join(', ')) if _unreadable | length > 0 else '' }}
+
+- name: Read the Limitador PodMonitor
+  kubernetes.core.k8s_info:
+    api_version: monitoring.coreos.com/v1
+    kind: PodMonitor
+    namespace: "{{ validate_platform_kuadrant_namespace }}"
+    name: "{{ validate_platform_limitador_podmonitor }}"
+  register: validate_platform_limitador_monitor
+
+- name: Read the Authorino ServiceMonitor
+  kubernetes.core.k8s_info:
+    api_version: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    namespace: "{{ validate_platform_kuadrant_namespace }}"
+    name: "{{ validate_platform_authorino_servicemonitor }}"
+  register: validate_platform_authorino_monitor
+
+- name: Read the TelemetryPolicy of the Gateway
+  kubernetes.core.k8s_info:
+    api_version: extensions.kuadrant.io/v1alpha1
+    kind: TelemetryPolicy
+    namespace: "{{ validate_platform_ingress_namespace }}"
+    name: "{{ validate_platform_telemetry_policy }}"
+  register: validate_platform_telemetry
+
+- name: Read the Istio PodMonitor of Kuadrant observability
+  kubernetes.core.k8s_info:
+    api_version: monitoring.coreos.com/v1
+    kind: PodMonitor
+    namespace: "{{ validate_platform_ingress_namespace }}"
+    name: "{{ validate_platform_broken_istio_podmonitor }}"
+  register: validate_platform_istio_monitor
+
+# Tokens per tier in Prometheus: Limitador and Authorino scraped by our monitors, label `tier`
+# from the TelemetryPolicy. Kuadrant spec.observability must stay off on RHCL 1.4.3: its Istio
+# PodMonitor scrapes port 15021 and TargetDown fires (ansible README, section Observability).
+- name: Record P20 (Kuadrant metrics)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _limitador: "{{ validate_platform_limitador_monitor.resources | length }}"
+    _authorino: "{{ validate_platform_authorino_monitor.resources | length }}"
+    _policy: "{{ validate_platform_telemetry.resources[0] | default({}) }}"
+    _enforced: "{{ _policy | condition_status('Enforced') }}"
+    _istio: "{{ validate_platform_istio_monitor.resources | length }}"
+    _r:
+      group: platform
+      id: P20
+      name: Kuadrant metrics (Limitador, Authorino, tier label)
+      status: >-
+        {{ 'FAIL' if _limitador | int == 0 or _authorino | int == 0 or _enforced != 'True'
+           else ('WARN' if _istio | int > 0 else 'PASS') }}
+      detail: >-
+        PodMonitor {{ validate_platform_limitador_podmonitor }} {{ 'present' if _limitador | int > 0 else 'missing' }},
+        ServiceMonitor {{ validate_platform_authorino_servicemonitor }} {{ 'present' if _authorino | int > 0 else 'missing' }},
+        TelemetryPolicy {{ validate_platform_telemetry_policy }}
+        {{ 'missing' if not _policy else 'Enforced=' ~ _enforced }}{{
+        '; ' ~ validate_platform_broken_istio_podmonitor ~ ' present: Kuadrant observability is on (TargetDown on RHCL 1.4.3)'
+        if _istio | int > 0 else '' }}
