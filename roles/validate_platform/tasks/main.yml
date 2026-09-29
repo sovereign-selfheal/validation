@@ -18,6 +18,9 @@
 - name: Ingress checks
   ansible.builtin.import_tasks: ingress.yml
 
+- name: User workload monitoring checks
+  ansible.builtin.import_tasks: monitoring.yml
+
 - name: Argo CD and workload checks
   ansible.builtin.import_tasks: workloads.yml
 

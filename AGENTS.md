@@ -99,7 +99,8 @@ this repo in the same change set.
   HPA fixed at 2, Authorino replicas, the ClusterSecretStore `sovereign-selfheal`, the root
   Application `openshift-gitops/sovereign-selfheal`, the Kuadrant metrics of P20 (PodMonitor
   `kuadrant-system/limitador`, ServiceMonitor `kuadrant-system/authorino`, TelemetryPolicy
-  `openshift-ingress/openshift-ai-inference-labels`, no `istio-pod-monitor`).
+  `openshift-ingress/openshift-ai-inference-labels`, no `istio-pod-monitor`), the retention (15d) and
+  the volumes of the user workload Prometheus (P21).
 
 ## 6. Out of scope
 

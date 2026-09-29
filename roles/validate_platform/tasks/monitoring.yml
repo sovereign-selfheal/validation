@@ -1,0 +1,50 @@
+---
+- name: Read the user workload Prometheus
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: StatefulSet
+    namespace: "{{ validate_platform_uwm_namespace }}"
+    name: prometheus-user-workload
+  register: validate_platform_uwm_sts
+
+- name: Read the volumes of the user workload Prometheus
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: PersistentVolumeClaim
+    namespace: "{{ validate_platform_uwm_namespace }}"
+  register: validate_platform_uwm_pvcs
+
+# The router, vLLM and Kuadrant metrics must survive a Prometheus restart and cover the demo days
+# (ansible repo, roles/user_workload_monitoring). The OpenShift default is 24h on an emptyDir.
+- name: Record P21 (user workload Prometheus retention and volume)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _sts: "{{ validate_platform_uwm_sts.resources[0] | default({}) }}"
+    _args: >-
+      {{ _sts.spec.template.spec.containers | default([]) | selectattr('name', 'eq', 'prometheus')
+         | map(attribute='args') | first | default([]) }}
+    _retention: >-
+      {{ _args | select('match', '--storage.tsdb.retention.time=') | map('regex_replace', '^.*=', '')
+         | first | default('default (24h)') }}
+    _templates: "{{ _sts.spec.volumeClaimTemplates | default([]) | length }}"
+    _replicas: "{{ _sts.spec.replicas | default(0) }}"
+    # StatefulSet PVCs are named <template>-prometheus-user-workload-<ordinal>.
+    _prefixes: >-
+      {{ _sts.spec.volumeClaimTemplates | default([]) | map(attribute='metadata.name')
+         | map('regex_replace', '$', '-prometheus-user-workload-') | list }}
+    _bound: >-
+      {{ validate_platform_uwm_pvcs.resources | selectattr('status.phase', 'eq', 'Bound')
+         | map(attribute='metadata.name')
+         | select('match', '^(' ~ (_prefixes | map('regex_escape') | join('|') or 'NONE') ~ ')[0-9]+$')
+         | list | length }}
+    _r:
+      group: platform
+      id: P21
+      name: user workload Prometheus keeps metrics {{ validate_platform_uwm_retention }} on volumes
+      status: >-
+        {{ 'PASS' if _retention == validate_platform_uwm_retention and _templates | int > 0
+                     and _bound | int >= _replicas | int and _replicas | int > 0 else 'FAIL' }}
+      detail: >-
+        retention {{ _retention }}, {{ 'volumeClaimTemplate set' if _templates | int > 0 else 'no volume (emptyDir)' }},
+        {{ _bound }}/{{ _replicas }} PVC(s) Bound
