@@ -89,7 +89,7 @@ this repo in the same change set.
     (`qwen38-local`, `qwen25-05b-local`); Tempo `tempo`, collector Deployment `otel-collector`.
   - Root Application values read by `validate_context`: `modelProfile`, `sota.enabled`,
     `classifier.mode`, `observability.enabled`, `secretStore.enabled`.
-  - Tiers: the legal budget (5,000 tokens / 10 minutes) drives L1.
+  - Tiers: the legal budget (20,000 tokens / 5 minutes) drives L1.
 - **`router` repo.** The format of the `[policy-router] {...}` log line (a Python dict repr with
   `routed_to`, `decided_by`, `reason`, `team`, `trace_id`). The parser is
   `roles/validate_router/module_utils/policy_router.py`; its tests are in `tests/`.

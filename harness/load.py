@@ -6,7 +6,7 @@
 Groups (run in this order, the order matters for the side effects):
   sota      S1 long SOTA answer, S2 SOTA reasoning on per request, S3 SOTA streaming + usage
   parallel  C1 5 concurrent local calls
-  legal     L1 legal tier gets 429 (blocks the legal tier for up to 10 minutes), L2 research not affected
+  legal     L1 legal tier gets 429 (blocks the legal tier for up to 5 minutes), L2 research not affected
   failover  F1 one LiteLLM pod and one Presidio pod deleted under load: every request must answer 200
 
 Normally started by the role validate_load. Standalone:
@@ -130,8 +130,9 @@ class Suite:
     def legal(self):
         total, calls, code, start = 0, 0, 200, time.time()
         prompt = "Write a detailed essay of about 800 words on the history of the Roman law."
+        # Budget 20k tokens / 5 min (gitops bootstrap/values.yaml): about 5 answers of 4k.
         while code == 200 and calls < 20:
-            r, _ = self.chat(prompt, tier="legal", max_tokens=1200)
+            r, _ = self.chat(prompt, tier="legal", max_tokens=4000)
             code = r.status_code
             calls += 1
             total += self.usage(r) or 0

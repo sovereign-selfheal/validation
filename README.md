@@ -44,7 +44,7 @@ consent). The load groups (`sota`, `parallel`, `legal`, `failover`) run in
 
 Things to know:
 
-- **Legal tier.** After L1, the legal tier answers 429 for up to 10 minutes. A3 uses the legal
+- **Legal tier.** After L1, the legal tier answers 429 for up to 5 minutes. A3 uses the legal
   key, so `--tags access` fails A3 during that time.
 - **Local-only mode.** With `sota.enabled: false`, the alias `sota-smart` is served by the local
   model. The routing decisions are the same, so `routing` and `demo` still apply; the `sota`
