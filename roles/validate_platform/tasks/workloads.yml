@@ -115,6 +115,39 @@
       status: "{{ 'PASS' if _ready == 'True' else 'FAIL' }}"
       detail: "{{ 'not found' if not _isvc else 'Ready=' ~ _ready ~ ', URL ' ~ (_isvc.status.url | default('-')) }}"
 
+# gitops chart local-model: HardwareProfile <isvc>-<profile> in the model namespace, linked by two annotations.
+- name: Read the HardwareProfiles of the model namespace
+  kubernetes.core.k8s_info:
+    api_version: infrastructure.opendatahub.io/v1
+    kind: HardwareProfile
+    namespace: "{{ validation_models_namespace }}"
+  register: validate_platform_hwprofiles
+
+- name: Record P19 (local model hardware profile)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _isvc_name: "{{ validate_platform_isvc_by_profile[validation_ctx.model_profile] | default('') }}"
+    _expected: "{{ _isvc_name ~ '-' ~ validation_ctx.model_profile }}"
+    _isvc: "{{ validate_platform_isvcs.resources | selectattr('metadata.name', 'equalto', _isvc_name) | first | default({}) }}"
+    _ann: "{{ _isvc.metadata.annotations | default({}) }}"
+    _linked_name: "{{ _ann['opendatahub.io/hardware-profile-name'] | default('') }}"
+    _linked_ns: "{{ _ann['opendatahub.io/hardware-profile-namespace'] | default('') }}"
+    _profile: "{{ validate_platform_hwprofiles.resources | selectattr('metadata.name', 'equalto', _expected) | first | default({}) }}"
+    _ids: "{{ _profile.spec.identifiers | default([]) | map(attribute='identifier') | list }}"
+    _gpu_ok: "{{ validation_ctx.model_profile != 'gpu' or 'nvidia.com/gpu' in _ids }}"
+    _ok: >-
+      {{ _profile | length > 0 and _linked_name == _expected
+         and _linked_ns == validation_models_namespace and _gpu_ok | bool }}
+    _r:
+      group: platform
+      id: P19
+      name: InferenceService {{ _isvc_name }} linked to hardware profile {{ _expected }}
+      status: "{{ 'PASS' if _ok | bool else 'FAIL' }}"
+      detail: >-
+        profile {{ 'present' if _profile else 'missing' }}{{ ', identifiers: ' ~ _ids | join(', ') if _profile else '' }};
+        ISVC annotation {{ (_linked_ns ~ '/' ~ _linked_name) if _linked_name else 'missing' }}
+
 - name: Read the ExternalSecrets
   kubernetes.core.k8s_info:
     api_version: external-secrets.io/v1
