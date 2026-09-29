@@ -82,7 +82,8 @@ routing_cases:
 
   # The self-heal agents call tools. A short request stays local (efficiency gate); the local
   # model must answer with a tool call and without its reasoning in the text (vLLM
-  # --reasoning-parser moves it out of `content`). The model reasons first (thinking on by
+  # --reasoning-parser moves it out of `content`; the Qwen3 template opens <think> in the
+  # prompt, so leaked reasoning shows only </think>). The model reasons first (thinking on by
   # default, about 350 tokens here), so the case needs a larger token budget.
   - id: R8
     name: agent tool call -> local, tool call without reasoning text
@@ -99,7 +100,7 @@ routing_cases:
               namespace: {type: string}
               pod: {type: string}
             required: [namespace, pod]
-    expect: {routed_to: local-fast, decided_by: efficiency, tool_call: get_pod_logs, content_excludes: ["<think>"]}
+    expect: {routed_to: local-fast, decided_by: efficiency, tool_call: get_pod_logs, content_excludes: ["<think>", "</think>"]}
 
 # Demo prompts (router v0.4.0 or later: ner.person_min_words, ner.context_entities).
 # Generic questions that name places, nationalities or single words that look like names go
