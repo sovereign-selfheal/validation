@@ -39,6 +39,10 @@ validate_platform_telemetry_policy: openshift-ai-inference-labels
 # (it scrapes port 15021 of the gateway pods and TargetDown fires).
 validate_platform_broken_istio_podmonitor: istio-pod-monitor
 
+# P21: user workload Prometheus (ansible repo, roles/user_workload_monitoring).
+validate_platform_uwm_namespace: openshift-user-workload-monitoring
+validate_platform_uwm_retention: 15d
+
 # Workloads of the gitops repo that must run with high availability.
 validate_platform_ha_deployments:
   - {name: litellm, selector: app=litellm}
