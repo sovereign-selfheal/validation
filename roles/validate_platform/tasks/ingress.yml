@@ -103,7 +103,10 @@
 # failed answers 503 (wasm_fail_stream) to every request; the passthrough Route balances by
 # source IP, so some clients always hit that pod. Healthy: successes >= 1 and failures 0 (same
 # rule as roles/ingress_gateway/tasks/verify.yml in the ansible repo, which recreates such pods
-# after the seed). A pod that just started may not have tried yet: short wait, then report.
+# after the seed). The fetch stats disappear when Kuadrant updates its EnvoyFilter (any policy
+# change): Envoy reloads the module from its cache. So a pod with no fetch stats is healthy when
+# the module runs (wasmcustom.kuadrant.configs > 0); a pod whose download failed never has it.
+# A pod that just started may not have tried yet: short wait, then report.
 - name: Read the wasm download stats of the gateway pods
   block:
     - name: Read the wasm download stats of each gateway pod
@@ -111,7 +114,7 @@
         namespace: "{{ validate_platform_ingress_namespace }}"
         pod: "{{ _pod.metadata.name }}"
         container: "{{ validate_platform_gateway_proxy_container }}"
-        command: pilot-agent request GET stats?filter=wasm.remote_load_fetch_
+        command: pilot-agent request GET stats?filter=remote_load_fetch_|wasmcustom.kuadrant.configs
       loop: "{{ validate_platform_gateway_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
       loop_control:
         loop_var: _pod
@@ -122,7 +125,8 @@
       until: >-
         (validate_platform_gateway_wasm.rc | default(1) | int != 0)
         or (validate_platform_gateway_wasm.stdout | default('')
-            | regex_findall('remote_load_fetch_(?:successes|failures): ([0-9]+)') | map('int') | sum) > 0
+            | regex_findall('(?:remote_load_fetch_successes|remote_load_fetch_failures|kuadrant\\.configs): ([0-9]+)')
+            | map('int') | sum) > 0
       retries: "{{ validate_platform_gateway_wasm_retries }}"
       delay: "{{ validate_platform_gateway_wasm_delay }}"
   rescue:
@@ -142,13 +146,19 @@
             'pod': r._pod.metadata.name,
             'read': (r.rc | default(1) | int) == 0,
             'successes': out | regex_findall('remote_load_fetch_successes: ([0-9]+)') | map('int') | sum,
-            'failures': out | regex_findall('remote_load_fetch_failures: ([0-9]+)') | map('int') | sum}] -%}
+            'failures': out | regex_findall('remote_load_fetch_failures: ([0-9]+)') | map('int') | sum,
+            'configs': out | regex_findall('kuadrant\\.configs: ([0-9]+)') | map('int') | sum}] -%}
       {%- endfor -%}
       {{ acc.items }}
     _read: "{{ _state | selectattr('read') | list }}"
-    _ok: "{{ _read | selectattr('successes', 'gt', 0) | selectattr('failures', 'eq', 0) | map(attribute='pod') | list }}"
+    _ok: >-
+      {{ _read | selectattr('failures', 'eq', 0) | rejectattr('successes', 'eq', 0) | map(attribute='pod') | list
+         + _read | selectattr('failures', 'eq', 0) | selectattr('successes', 'eq', 0) | selectattr('configs', 'gt', 0)
+           | map(attribute='pod') | list }}
     _failed: "{{ _read | selectattr('failures', 'gt', 0) | map(attribute='pod') | list }}"
-    _untried: "{{ _read | selectattr('successes', 'eq', 0) | selectattr('failures', 'eq', 0) | map(attribute='pod') | list }}"
+    _untried: >-
+      {{ _read | selectattr('successes', 'eq', 0) | selectattr('failures', 'eq', 0) | selectattr('configs', 'eq', 0)
+         | map(attribute='pod') | list }}
     _unreadable: "{{ _state | rejectattr('read') | map(attribute='pod') | list }}"
     _r:
       group: platform
