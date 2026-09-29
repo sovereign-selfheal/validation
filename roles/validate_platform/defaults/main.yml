@@ -25,6 +25,11 @@ validate_platform_route_name: maas-router
 validate_platform_route_timeout: 10m
 # AWS Classic load balancer idle timeout; the API may return 10m or 10m0s.
 validate_platform_lb_idle_timeout_regex: "^10m(0s)?$"
+# P18: Envoy container of the gateway pods, and the wait for a pod that has not tried the
+# wasm download yet (retries x delay seconds).
+validate_platform_gateway_proxy_container: istio-proxy
+validate_platform_gateway_wasm_retries: 6
+validate_platform_gateway_wasm_delay: 5
 
 # Workloads of the gitops repo that must run with high availability.
 validate_platform_ha_deployments:

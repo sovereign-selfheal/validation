@@ -99,44 +99,66 @@
     field_selectors: [status.phase=Running]
   register: validate_platform_gateway_pods
 
-# Each gateway Envoy downloads the Kuadrant wasm module once, with no retry. A pod whose
-# download failed answers 503 (wasm_fail_stream) to every request; the passthrough Route
-# balances by source IP, so some clients always hit that pod. The ansible repo recreates such
-# pods after the seed (roles/ingress_gateway/tasks/verify.yml).
-- name: Read the wasm download stats of each gateway pod
-  kubernetes.core.k8s_exec:
-    namespace: "{{ validate_platform_ingress_namespace }}"
-    pod: "{{ _pod.metadata.name }}"
-    container: istio-proxy
-    command: pilot-agent request GET stats?filter=wasm.remote_load_fetch_
-  loop: "{{ validate_platform_gateway_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
-  loop_control:
-    loop_var: _pod
-    label: "{{ _pod.metadata.name }}"
-  register: validate_platform_gateway_wasm
-  changed_when: false
-  failed_when: false
+# Each gateway Envoy downloads the Kuadrant wasm module, with no retry. A pod whose download
+# failed answers 503 (wasm_fail_stream) to every request; the passthrough Route balances by
+# source IP, so some clients always hit that pod. Healthy: successes >= 1 and failures 0 (same
+# rule as roles/ingress_gateway/tasks/verify.yml in the ansible repo, which recreates such pods
+# after the seed). A pod that just started may not have tried yet: short wait, then report.
+- name: Read the wasm download stats of the gateway pods
+  block:
+    - name: Read the wasm download stats of each gateway pod
+      kubernetes.core.k8s_exec:
+        namespace: "{{ validate_platform_ingress_namespace }}"
+        pod: "{{ _pod.metadata.name }}"
+        container: "{{ validate_platform_gateway_proxy_container }}"
+        command: pilot-agent request GET stats?filter=wasm.remote_load_fetch_
+      loop: "{{ validate_platform_gateway_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
+      loop_control:
+        loop_var: _pod
+        label: "{{ _pod.metadata.name }}"
+      register: validate_platform_gateway_wasm
+      changed_when: false
+      failed_when: false
+      until: >-
+        (validate_platform_gateway_wasm.rc | default(1) | int != 0)
+        or (validate_platform_gateway_wasm.stdout | default('')
+            | regex_findall('remote_load_fetch_(?:successes|failures): ([0-9]+)') | map('int') | sum) > 0
+      retries: "{{ validate_platform_gateway_wasm_retries }}"
+      delay: "{{ validate_platform_gateway_wasm_delay }}"
+  rescue:
+    - name: Note the gateway pods that made no download attempt
+      ansible.builtin.debug:
+        msg: Some gateway pods made no wasm download attempt in time (P18 reports them).
 
 - name: Record P18 (Kuadrant wasm module on every gateway pod)
   ansible.builtin.set_fact:
     validation_results: "{{ validation_results + [_r] }}"
   vars:
-    _stats: >-
-      {{ validate_platform_gateway_wasm.results
-         | map(attribute='stdout', default='') | map('regex_findall', 'successes: ([0-9]+)')
-         | map('join') | map('int') | list }}
-    _failures: >-
-      {{ validate_platform_gateway_wasm.results
-         | map(attribute='stdout', default='') | map('regex_findall', 'failures: ([0-9]+)')
-         | map('join') | map('int') | sum }}
-    _loaded: "{{ _stats | select('gt', 0) | list | length }}"
-    _pods: "{{ _stats | length }}"
+    _state: >-
+      {%- set acc = namespace(items=[]) -%}
+      {%- for r in validate_platform_gateway_wasm.results | default([]) -%}
+      {%- set out = r.stdout | default('') -%}
+      {%- set acc.items = acc.items + [{
+            'pod': r._pod.metadata.name,
+            'read': (r.rc | default(1) | int) == 0,
+            'successes': out | regex_findall('remote_load_fetch_successes: ([0-9]+)') | map('int') | sum,
+            'failures': out | regex_findall('remote_load_fetch_failures: ([0-9]+)') | map('int') | sum}] -%}
+      {%- endfor -%}
+      {{ acc.items }}
+    _read: "{{ _state | selectattr('read') | list }}"
+    _ok: "{{ _read | selectattr('successes', 'gt', 0) | selectattr('failures', 'eq', 0) | map(attribute='pod') | list }}"
+    _failed: "{{ _read | selectattr('failures', 'gt', 0) | map(attribute='pod') | list }}"
+    _untried: "{{ _read | selectattr('successes', 'eq', 0) | selectattr('failures', 'eq', 0) | map(attribute='pod') | list }}"
+    _unreadable: "{{ _state | rejectattr('read') | map(attribute='pod') | list }}"
     _r:
       group: platform
       id: P18
       name: Kuadrant wasm module loaded on every gateway pod
-      status: "{{ 'PASS' if _pods | int > 0 and _loaded | int == _pods | int else 'FAIL' }}"
+      status: "{{ 'PASS' if _state | length > 0 and _ok | length == _state | length else 'FAIL' }}"
       detail: >-
-        {{ 'no running gateway pod' if _pods | int == 0
-           else _loaded ~ '/' ~ _pods ~ ' pod(s) loaded it, fetch failures ' ~ _failures }}{{
-           '' if _loaded | int == _pods | int else ' (pods without it answer 503 wasm_fail_stream: delete them)' }}
+        {{ 'no running gateway pod' if _state | length == 0
+           else _ok | length ~ '/' ~ _state | length ~ ' pod(s) loaded it' }}{{
+           '; failed download (answers 503 wasm_fail_stream, delete the pod): ' ~ (_failed | join(', '))
+           if _failed | length > 0 else '' }}{{
+           '; no download attempt: ' ~ (_untried | join(', ')) if _untried | length > 0 else '' }}{{
+           '; stats not readable: ' ~ (_unreadable | join(', ')) if _unreadable | length > 0 else '' }}
