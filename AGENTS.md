@@ -86,7 +86,7 @@ this repo in the same change set.
     `litellm` (`app=litellm`, container `litellm`) and `presidio-analyzer`
     (`app=presidio-analyzer`); PDBs with the same names; ConfigMap `litellm-config`; API key
     Secrets `apikey-<tier>-1` (key `api_key`); InferenceService names per profile
-    (`qwen38-local`, `qwen25-05b-local`); Tempo `tempo`, collector Deployment `otel-collector`.
+    (`qwen38-local`, `qwen25-05b-local`) and their HardwareProfiles `<name>-<profile>` (P19); Tempo `tempo`, collector Deployment `otel-collector`.
   - Root Application values read by `validate_context`: `modelProfile`, `sota.enabled`,
     `classifier.mode`, `observability.enabled`, `secretStore.enabled`.
   - Tiers: the legal budget (20,000 tokens / 5 minutes) drives L1.
