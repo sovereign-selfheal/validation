@@ -32,6 +32,7 @@ validation_profile_defaults:
   classifier: {mode: local}
   observability: {enabled: true}
   secretStore: {enabled: false}
+  decisionModel: {enabled: false}
 
 # The router answers with a self-signed certificate on RHDP test clusters.
 validation_validate_certs: false

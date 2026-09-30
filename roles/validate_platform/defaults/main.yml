@@ -56,6 +56,14 @@ validate_platform_isvc_by_profile:
   gpu: qwen38-local
   cpu: qwen25-05b-local
 
+# Decision model (gitops component decision-model, decisionModel.enabled): InferenceService,
+# its hardware profile, the node label of its GPU pool, the port of the decision server.
+validate_platform_decision_isvc: dgemma-decision
+validate_platform_decision_hwprofile: dgemma-decision-gpu
+validate_platform_decision_node_label: node-role.kubernetes.io/gpu-decision
+validate_platform_decision_container: kserve-container
+validate_platform_decision_port: 8080
+
 # Secret store of ESO (ansible repo, roles/secrets_bootstrap).
 validate_platform_secret_store: sovereign-selfheal
 

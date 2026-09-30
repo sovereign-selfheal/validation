@@ -87,13 +87,18 @@ this repo in the same change set.
     (`app=presidio-analyzer`); PDBs with the same names; ConfigMap `litellm-config`; API key
     Secrets `apikey-<tier>-1` (key `api_key`); InferenceService names per profile
     (`qwen38-local`, `qwen25-05b-local`) and their HardwareProfiles `<name>-<profile>` (P19); Tempo `tempo`, collector Deployment `otel-collector`.
+  - Decision model (`decisionModel.enabled`): InferenceService `dgemma-decision`, HardwareProfile
+    `dgemma-decision-gpu`, node label `node-role.kubernetes.io/gpu-decision`, decision server in
+    `kserve-container` on port 8080 (`/v1/systemone`), the KServe stop annotation
+    `serving.kserve.io/stop` (P22, F2, F3).
   - Root Application values read by `validate_context`: `modelProfile`, `sota.enabled`,
-    `classifier.mode`, `observability.enabled`, `secretStore.enabled`.
+    `classifier.mode`, `observability.enabled`, `secretStore.enabled`, `decisionModel.enabled`.
   - Tiers: the legal budget (20,000 tokens / 5 minutes) drives L1.
 - **`router` repo.** The format of the `[policy-router] {...}` log line (a Python dict repr with
   `routed_to`, `decided_by`, `reason`, `team`, `trace_id`). The parser is
   `roles/validate_router/module_utils/policy_router.py`; its tests are in `tests/`.
-  D1-D8 need router v0.4.0 or later (`(no id)`, `(<2 words)` markers).
+  D1-D8 need router v0.4.0 or later (`(no id)`, `(<2 words)` markers). F2 needs router v0.7.0
+  (the C2 signal label `fallback/llm@<conf>` of the systemone backend).
 - **`ansible` repo.** Operator packages (`validate_platform_operators`), Route `maas-router` and
   its 10m timeout, the load balancer idle timeout, Gateway `openshift-ai-inference` with its
   HPA fixed at 2, Authorino replicas, the ClusterSecretStore `sovereign-selfheal`, the root

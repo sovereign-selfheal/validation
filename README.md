@@ -26,7 +26,7 @@ of the tiers (from the Secrets that ESO creates).
 
 | Tag | Checks | Default |
 |---|---|---|
-| `platform` | P1-P21: operators (CSV `Succeeded`, `Manual` approval, pending InstallPlans), GPU node and ClusterPolicy, load balancer and Route timeouts, inference Gateway and its HPA, Kuadrant wasm module on every gateway pod (P18), Kuadrant metrics with the `tier` label (P20), Prometheus retention and volumes (P21), Argo CD Applications, HA replicas and PDBs, Authorino, local model and its hardware profile (P19), ESO, observability, team access (P17, only when the Group `selfheal-team` exists) | yes |
+| `platform` | P1-P22: operators (CSV `Succeeded`, `Manual` approval, pending InstallPlans), GPU node and ClusterPolicy, load balancer and Route timeouts, inference Gateway and its HPA, Kuadrant wasm module on every gateway pod (P18), Kuadrant metrics with the `tier` label (P20), Prometheus retention and volumes (P21), Argo CD Applications, HA replicas and PDBs, Authorino, local model and its hardware profile (P19), ESO, observability, team access (P17, only when the Group `selfheal-team` exists), decision model: Ready, on its GPU pool, `/v1/systemone` answers (P22, only with `decisionModel.enabled`) | yes |
 | `isolation` | I0-I5: a probe pod in a temporary namespace cannot reach LiteLLM, Presidio or the local model; Presidio has no egress (IP and DNS) | yes |
 | `access` | A1-A3: no key and invalid key get 401; the tier comes from the key, not from the `x-team` header | yes |
 | `routing` | R1-R8: short, complex, Italian, PII, implicit sensitivity (lexicon and C2 classifier), prompt injection, agent tool call | yes |
@@ -35,6 +35,7 @@ of the tiers (from the Secrets that ESO creates).
 | `parallel` | C1: 5 concurrent calls to the local model | no |
 | `legal` | L1-L2: the legal tier gets 429 after its token budget; research is not affected | no |
 | `failover` | F1: one LiteLLM pod and one Presidio pod are deleted under load; every request must answer 200 | no |
+| `decision` | F2-F3: the decision model is stopped (KServe stop annotation); R6b must still route LOCAL through the chat fallback of C2 (`fallback/llm@` in the reason); then the model must be Ready again. Only with `decisionModel.enabled` and router v0.7.0 | no |
 | `selfheal` | H1: a managed ConfigMap is changed by hand; Argo CD must revert it | no |
 
 The groups marked "no" load or change the cluster. They run with
