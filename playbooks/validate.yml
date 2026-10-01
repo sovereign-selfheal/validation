@@ -7,7 +7,7 @@
 #
 # Default groups: platform, isolation, access, routing, demo.
 # Disruptive groups (validation_disruptive=true, or named with --tags): sota, parallel,
-# legal, failover, decision, selfheal.
+# legal, context, failover, decision, selfheal.
 - name: Validate the Sovereign Self-Healing Platform demo
   hosts: localhost
   gather_facts: false

@@ -1,5 +1,6 @@
 ---
-# Long SOTA answers, parallel calls, legal 429 and failover, run by harness/load.py.
+# Long SOTA answers, parallel calls, legal 429, agents' large contexts and failover, run by
+# harness/load.py.
 # These groups load or change the cluster: they run with validation_disruptive=true, or
 # when their tag is named with --tags.
 - name: Select the load groups
@@ -10,7 +11,7 @@
     _named: "{{ validate_load_groups | select('in', ansible_run_tags) | list }}"
     _requested: "{{ _named if _named | length > 0 else (validate_load_groups if validation_disruptive | bool else []) }}"
     _sota_skipped: "{{ 'sota' in _requested and not validation_ctx.sota_enabled | bool }}"
-  tags: [sota, parallel, legal, failover]
+  tags: [sota, parallel, legal, context, failover]
 
 - name: Record the SOTA group as skipped (local-only mode)
   ansible.builtin.set_fact:
@@ -26,11 +27,11 @@
       Load groups not run ({{ validate_load_groups | join(', ') }}): they load or change the cluster.
       Run them with -e validation_disruptive=true or name them with --tags.
   when: validate_load_selected | length == 0 and not validate_load_sota_skipped | bool
-  tags: [sota, parallel, legal, failover]
+  tags: [sota, parallel, legal, context, failover]
 
 - name: Run the harness
   when: validate_load_selected | length > 0
-  tags: [sota, parallel, legal, failover]
+  tags: [sota, parallel, legal, context, failover]
   block:
     - name: Create a file for the harness report
       ansible.builtin.tempfile:

@@ -34,6 +34,7 @@ of the tiers (from the Secrets that ESO creates).
 | `sota` | S1-S3: long SOTA answer, reasoning on per request, streaming with usage | no |
 | `parallel` | C1: 5 concurrent calls to the local model | no |
 | `legal` | L1-L2: the legal tier gets 429 after its token budget; research is not affected | no |
+| `context` | K1-K7: agents' large contexts (about 8k to 100k tokens: system prompt, tool calls, tool output, streamed). A context with a sensitive sentence must stay LOCAL; a benign context that stays LOCAL only because Presidio or C2 timed out is a WARN (fail-closed, no leak). Uses about 300k tokens of the research tier, paced over about 5 minutes | no |
 | `failover` | F1: one LiteLLM pod and one Presidio pod are deleted under load; every request must answer 200 | no |
 | `decision` | F2-F3: the decision model is stopped (KServe stop annotation); R6b must still route LOCAL through the chat fallback of C2 (`fallback/llm@` in the reason); then the model must be Ready again. Only with `decisionModel.enabled` and router v0.7.0 | no |
 | `selfheal` | H1: a managed ConfigMap is changed by hand; Argo CD must revert it | no |
@@ -79,7 +80,7 @@ WARN  P4   no unapproved InstallPlans | left unapproved by the pinning policy: g
 ```
 playbooks/validate.yml       entry point: the roles below, in order
 cases/routing.yml            routing and demo prompts with the expected decisions
-harness/load.py              sota, parallel, legal, failover (Python, requests + kubernetes client)
+harness/load.py              sota, parallel, legal, context, failover (Python, requests + kubernetes client)
 roles/
   validate_context/          cluster, URL, profile, API keys; starts the result list
   validate_platform/         platform group
