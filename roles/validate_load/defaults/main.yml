@@ -1,7 +1,7 @@
 ---
 # Groups of harness/load.py, in the order they run (the order matters: legal blocks the
 # legal tier for up to 10 minutes, context uses about 300k tokens of the research tier in
-# 5 minutes, failover deletes pods).
+# 5 minutes, about 450k in 8 minutes with the SOTA size cap on, failover deletes pods).
 validate_load_groups: [sota, parallel, legal, context, failover]
 # Seconds of traffic during the failover test.
 validate_load_failover_seconds: 75

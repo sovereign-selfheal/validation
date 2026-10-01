@@ -12,6 +12,9 @@ Groups (run in this order, the order matters for the side effects):
             tool output, as the self-heal agents send them. A context with a sensitive sentence must
             stay LOCAL (FAIL otherwise); a benign context that stays LOCAL only because a detector
             timed out is a WARN (fail-closed, no leak). Paced to the research token budget.
+            K8-K10 the SOTA size cap of router v0.8.0 (efficiency.sota_max_prompt_chars): benign and
+            sensitive contexts just under the cap, a benign one just over it (LOCAL, no detector).
+            SKIP when the cap is off.
 
 Normally started by the role validate_load. Standalone:
   VALIDATION_KEY_RESEARCH=... VALIDATION_KEY_LEGAL=... uv run python harness/load.py \
@@ -82,6 +85,31 @@ def agent_messages(tokens, seed, needle=False):
         messages.append({"role": "tool", "tool_call_id": call_id, "content": "\n".join(lines[i:i + chunk])})
     messages.append({"role": "user", "content": AGENT_QUESTION})
     return messages
+
+
+def payload_chars(messages, tools=None):
+    """Size of a request as the router measures it for the SOTA size cap (router v0.8.0,
+    ChainRouter._prompt_chars): every message content and tool call arguments, joined with
+    newlines, plus the tool definitions as JSON."""
+    parts = []
+    for msg in messages:
+        if isinstance(msg.get("content"), str):
+            parts.append(msg["content"])
+        for call in msg.get("tool_calls") or []:
+            args = (call.get("function") or {}).get("arguments")
+            if isinstance(args, str):
+                parts.append(args)
+    size = len("\n".join(p for p in parts if p))
+    return size + (len(json.dumps(tools, ensure_ascii=False)) if tools else 0)
+
+
+def agent_messages_chars(chars, seed, needle=False):
+    """Agent messages of about `chars` characters as the router counts them (within 1%)."""
+    tokens = 10000
+    for _ in range(4):  # the size is almost linear in `tokens`
+        size = payload_chars(agent_messages(tokens, seed, needle))
+        tokens = max(100, int(tokens * chars / size))
+    return agent_messages(tokens, seed, needle)
 
 
 class Suite:
@@ -216,8 +244,10 @@ class Suite:
         large call the next one waits, so the budget of one minute is never exceeded."""
         cases = [("K1", 8000, False), ("K2", 8000, True), ("K3", 30000, False), ("K4", 30000, True),
                  ("K5", 60000, False), ("K6", 60000, True), ("K7", 100000, False)]
+        cap = None
         for rid, tokens, needle in cases:
             status, first, total, ptok, d = self.agent_call(agent_messages(tokens, seed=tokens, needle=needle))
+            cap = d.get("sota_cap", cap)
             reason = d.get("reason", "")
             timed_out = "error" in reason  # ner error:<type> or the classifier error signal
             routed = d.get("routed_to", "?")
@@ -231,6 +261,40 @@ class Suite:
             else:
                 self.record("context", rid, name, True, detail, status="WARN" if timed_out else "PASS")
             time.sleep(max(5, (ptok or tokens) / 100000 * 60))  # stay below 100k tokens a minute
+        self.context_cap(cap)
+
+    def context_cap(self, cap):
+        """K8-K10: the SOTA size cap (router v0.8.0). `cap` is `sota_cap` from the log line of K1-K7."""
+        cases = [("K8", 0.95, False), ("K9", 0.95, True), ("K10", 1.05, False)]
+        for rid, ratio, needle in cases:
+            kind = "sensitive sentence" if needle else "benign"
+            name = f"agent context {'just under' if ratio < 1 else 'just over'} the SOTA size cap, {kind}"
+            if not cap:
+                self.record("context", rid, name, True,
+                            "SOTA size cap off (no sota_cap in the log line: router < v0.8.0 or "
+                            "efficiency.sota_max_prompt_chars unset)", status="SKIP")
+                continue
+            messages = agent_messages_chars(int(cap * ratio), seed=7000 + int(ratio * 100), needle=needle)
+            status, first, total, ptok, d = self.agent_call(messages)
+            reason = d.get("reason", "")
+            capped = "SOTA context limit" in reason
+            routed = d.get("routed_to", "?")
+            detail = (f"HTTP {status} cap={cap} prompt_chars={d.get('prompt_chars')} prompt_tokens={ptok} "
+                      f"first chunk {first or 0:.1f}s routed_to={routed} by={d.get('decided_by', '?')} "
+                      f"| {reason[:200]}")
+            if status != 200 or not d:
+                self.record("context", rid, name, False, detail)
+            elif ratio > 1:  # over the cap: LOCAL by the efficiency gate, the privacy gate never ran
+                ok = (routed == "local-fast" and d.get("decided_by") == "efficiency" and capped
+                      and "ner_timeout_s" not in d)
+                self.record("context", rid, name, ok, detail)
+            elif capped:  # under the cap the cap must not apply
+                self.record("context", rid, name, False, detail)
+            elif needle:
+                self.record("context", rid, name, routed == "local-fast", detail)
+            else:  # benign: SOTA or LOCAL by the rules; LOCAL by a detector timeout is a WARN
+                self.record("context", rid, name, True, detail, status="WARN" if "error" in reason else "PASS")
+            time.sleep(max(5, (ptok or cap / 2.3) / 100000 * 60))  # stay below 100k tokens a minute
 
     def failover(self):
         codes, deleted = Counter(), []
