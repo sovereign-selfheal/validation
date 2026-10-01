@@ -148,6 +148,91 @@
         profile {{ 'present' if _profile else 'missing' }}{{ ', identifiers: ' ~ _ids | join(', ') if _profile else '' }};
         ISVC annotation {{ (_linked_ns ~ '/' ~ _linked_name) if _linked_name else 'missing' }}
 
+# gitops chart decision-model: the InferenceService is Ready, linked to its hardware profile, runs
+# on the gpu-decision pool, and the decision server answers one yes/no question with a probability.
+- name: Record P22 (decision model), skipped when it is off
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _r:
+      group: platform
+      id: P22
+      name: Decision model {{ validate_platform_decision_isvc }} answers /v1/systemone
+      status: SKIP
+      detail: decisionModel.enabled is false
+  when: not validation_ctx.decision_model_enabled | bool
+
+- name: Check the decision model
+  when: validation_ctx.decision_model_enabled | bool
+  vars:
+    _isvc: >-
+      {{ validate_platform_isvcs.resources
+         | selectattr('metadata.name', 'equalto', validate_platform_decision_isvc) | first | default({}) }}
+  block:
+    - name: Read the decision model pod
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ validation_models_namespace }}"
+        label_selectors:
+          - "serving.kserve.io/inferenceservice={{ validate_platform_decision_isvc }}"
+          - component=predictor
+      register: validate_platform_decision_pods
+
+    - name: Read the node of the decision model pod
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+        name: "{{ _pod.spec.nodeName | default('none') }}"
+      vars:
+        _pod: "{{ validate_platform_decision_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | first | default({}) }}"
+      register: validate_platform_decision_node
+
+    # One question, a fixed text; the reply must hold a probability. Python: the image has no curl.
+    - name: Ask the decision server one question
+      kubernetes.core.k8s_exec:
+        namespace: "{{ validation_models_namespace }}"
+        pod: "{{ (validate_platform_decision_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | first).metadata.name }}"
+        container: "{{ validate_platform_decision_container }}"
+        command: >-
+          python3 -c 'import json, time, urllib.request as u;
+          body = {"model": "validation", "state": {"text": "The payment API returns HTTP 503 for every request."},
+          "questions": {"outage": {"type": "noul", "instructions": "Is a service failing?"}}};
+          t = time.time();
+          r = u.urlopen(u.Request("http://127.0.0.1:{{ validate_platform_decision_port }}/v1/systemone",
+          json.dumps(body).encode(), {"content-type": "application/json"}), timeout=60);
+          p = json.load(r)["answers"]["outage"]["noul"];
+          print(json.dumps({"p": p, "ms": round((time.time() - t) * 1000)}))'
+      register: validate_platform_decision_answer
+      changed_when: false
+      failed_when: false
+      when: validate_platform_decision_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list | length > 0
+
+    - name: Record P22 (decision model)
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + [_r] }}"
+      vars:
+        _ready: "{{ _isvc | condition_status('Ready') if _isvc else 'missing' }}"
+        _ann: "{{ _isvc.metadata.annotations | default({}) }}"
+        _linked: "{{ _ann['opendatahub.io/hardware-profile-name'] | default('') == validate_platform_decision_hwprofile }}"
+        _node: "{{ validate_platform_decision_node.resources | first | default({}) }}"
+        _on_pool: "{{ validate_platform_decision_node_label in (_node.metadata.labels | default({})) }}"
+        _out: "{{ validate_platform_decision_answer.stdout | default('') | trim }}"
+        _answer: "{{ _out | from_json if _out.startswith('{') else {} }}"
+        _p_ok: "{{ _answer.p is defined and (_answer.p | float) >= 0 and (_answer.p | float) <= 1 }}"
+        _ok: "{{ _ready == 'True' and _linked | bool and _on_pool | bool and _p_ok | bool }}"
+        _r:
+          group: platform
+          id: P22
+          name: Decision model {{ validate_platform_decision_isvc }} answers /v1/systemone
+          status: "{{ 'PASS' if _ok | bool else 'FAIL' }}"
+          detail: >-
+            Ready={{ _ready }}; hardware profile {{ 'linked' if _linked | bool else 'not linked' }};
+            node {{ _node.metadata.name | default('none') }}
+            {{ '(' ~ validate_platform_decision_node_label ~ ')' if _on_pool | bool else '(not on the decision pool)' }};
+            {{ 'p(outage)=' ~ ('%.3f' | format(_answer.p | float)) ~ ' in ' ~ _answer.ms ~ ' ms' if _p_ok | bool
+               else 'no probability: ' ~ (_out or validate_platform_decision_answer.stderr | default('no pod'))[:200] }}
+
 - name: Read the ExternalSecrets
   kubernetes.core.k8s_info:
     api_version: external-secrets.io/v1

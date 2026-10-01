@@ -7,7 +7,7 @@
 #
 # Default groups: platform, isolation, access, routing, demo.
 # Disruptive groups (validation_disruptive=true, or named with --tags): sota, parallel,
-# legal, failover, selfheal.
+# legal, failover, decision, selfheal.
 - name: Validate the Sovereign Self-Healing Platform demo
   hosts: localhost
   gather_facts: false
@@ -34,6 +34,10 @@
         - name: Load checks (harness/load.py)
           ansible.builtin.import_role:
             name: validate_load
+        - name: C2 fallback check with the decision model stopped
+          ansible.builtin.import_role:
+            name: validate_decision
+          tags: [decision]
         - name: Argo CD self-heal check
           ansible.builtin.import_role:
             name: validate_selfheal

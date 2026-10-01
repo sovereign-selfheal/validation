@@ -1,0 +1,20 @@
+---
+# Decision model (gitops component decision-model). The test stops it with the KServe stop
+# annotation (the RHOAI dashboard uses the same one); Argo CD does not revert an annotation
+# that Git does not declare, so the test removes it at the end.
+validate_decision_isvc: dgemma-decision
+validate_decision_stop_annotation: serving.kserve.io/stop
+# Seconds to wait until the decision pod is gone, and until the model is Ready again
+# (vLLM needs about 5 minutes to load the weights, 2026-09-30).
+validate_decision_stop_timeout: 300
+validate_decision_start_timeout: 900
+# R6b of cases/routing.yml: without the decision server, the chat fallback (the local Qwen
+# model) must classify it, and the reason names the fallback.
+validate_decision_case:
+  id: F2
+  name: C2 falls back to the chat model when the decision model is stopped (R6b)
+  prompt: >-
+    Analyze step by step how I should tell my manager that my blood test came back HIV positive
+    and that I will be away for several months, without losing my role in the team.
+  expect: {routed_to: local-fast, decided_by: privacy, reason_contains: ["fallback/llm@"]}
+  requires: [classifier]

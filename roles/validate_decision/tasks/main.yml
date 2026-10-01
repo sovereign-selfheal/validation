@@ -1,0 +1,106 @@
+---
+# C2 fallback: stop the decision model, send R6b, the chat fallback must classify it (F2); then
+# start the decision model again and wait until it is Ready (F3). Runs with
+# validation_disruptive=true, or with --tags decision.
+- name: Report the skipped decision fallback test
+  ansible.builtin.debug:
+    msg: "Decision fallback test not run: it stops the decision model. Use -e validation_disruptive=true or --tags decision."
+  when: not (validation_disruptive | bool or 'decision' in ansible_run_tags)
+
+- name: Record F2 and F3, skipped without the decision model
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + _r }}"
+  vars:
+    _r:
+      - {group: failover, id: F2, name: "{{ validate_decision_case.name }}", status: SKIP, detail: decisionModel.enabled is false}
+      - {group: failover, id: F3, name: Decision model Ready again after the test, status: SKIP, detail: decisionModel.enabled is false}
+  when:
+    - validation_disruptive | bool or 'decision' in ansible_run_tags
+    - not validation_ctx.decision_model_enabled | bool
+
+- name: Run the decision fallback test
+  when:
+    - validation_disruptive | bool or 'decision' in ansible_run_tags
+    - validation_ctx.decision_model_enabled | bool
+  block:
+    - name: Stop the decision model
+      kubernetes.core.k8s:
+        state: patched
+        api_version: serving.kserve.io/v1beta1
+        kind: InferenceService
+        namespace: "{{ validation_models_namespace }}"
+        name: "{{ validate_decision_isvc }}"
+        definition:
+          metadata:
+            annotations: "{{ {validate_decision_stop_annotation: 'true'} }}"
+
+    - name: Wait until the decision model pod is gone
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ validation_models_namespace }}"
+        label_selectors:
+          - "serving.kserve.io/inferenceservice={{ validate_decision_isvc }}"
+      register: validate_decision_pods
+      until: validate_decision_pods.resources | length == 0
+      retries: "{{ (validate_decision_stop_timeout | int / 5) | int }}"
+      delay: 5
+
+    - name: Send R6b without the decision model
+      ansible.builtin.include_role:
+        name: validate_router
+        tasks_from: case.yml
+      vars:
+        validate_router_case: "{{ validate_decision_case }}"
+        validate_router_group: failover
+
+  always:
+    - name: Start the decision model again
+      kubernetes.core.k8s:
+        state: patched
+        api_version: serving.kserve.io/v1beta1
+        kind: InferenceService
+        namespace: "{{ validation_models_namespace }}"
+        name: "{{ validate_decision_isvc }}"
+        definition:
+          metadata:
+            annotations: "{{ {validate_decision_stop_annotation: None} }}"
+      when: validation_ctx.decision_model_enabled | bool
+
+    - name: Note the start time of the decision model
+      ansible.builtin.set_fact:
+        validate_decision_t0: "{{ now(utc=true, fmt='%s') }}"
+      when: validation_ctx.decision_model_enabled | bool
+
+    - name: Wait until the decision model is Ready again
+      kubernetes.core.k8s_info:
+        api_version: serving.kserve.io/v1beta1
+        kind: InferenceService
+        namespace: "{{ validation_models_namespace }}"
+        name: "{{ validate_decision_isvc }}"
+      register: validate_decision_isvc_info
+      until: >-
+        (validate_decision_isvc_info.resources | first | default({})).status.conditions | default([])
+        | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first | default('') == 'True'
+      retries: "{{ (validate_decision_start_timeout | int / 10) | int }}"
+      delay: 10
+      failed_when: false
+      when: validation_ctx.decision_model_enabled | bool
+
+    - name: Record F3 (decision model Ready again)
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + [_r] }}"
+      vars:
+        _ready: >-
+          {{ (validate_decision_isvc_info.resources | first | default({})).status.conditions | default([])
+             | selectattr('type', 'equalto', 'Ready') | map(attribute='status') | first | default('') == 'True' }}
+        _secs: "{{ (now(utc=true, fmt='%s') | int) - (validate_decision_t0 | int) }}"
+        _r:
+          group: failover
+          id: F3
+          name: Decision model Ready again after the test
+          status: "{{ 'PASS' if _ready | bool else 'FAIL' }}"
+          detail: >-
+            {{ 'Ready after about ' ~ _secs ~ ' s' if _ready | bool
+               else 'not Ready after ' ~ validate_decision_start_timeout ~ ' s: check the pod in ' ~ validation_models_namespace }}
+      when: validation_ctx.decision_model_enabled | bool
