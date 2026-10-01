@@ -45,7 +45,8 @@ Every check exists **once**: in Ansible, or in `harness/load.py`, never in both.
   Keep the API keys out of the logs (`no_log: true` on tasks that carry them; environment
   variables for the harness, never command-line arguments).
 - **Unique ids.** Each check has a unique id: `P` platform, `I` isolation, `A` access, `R` routing,
-  `D` demo, `S` sota, `C` parallel (concurrency), `L` legal, `F` failover, `H` self-heal;
+  `D` demo, `S` sota, `C` parallel (concurrency), `L` legal, `K` context (agents' large
+  contexts), `F` failover, `H` self-heal;
   `X` is reserved for an aborted run.
 - **Numbers from `-e` are strings.** Compare an overridable number with `| int`
   (`validate_platform_min_replicas | int`), else `-e name=3` breaks the template.
