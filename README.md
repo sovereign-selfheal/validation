@@ -70,7 +70,7 @@ The same results are written as JSON in `reports/validation-<cluster>-<time>.jso
 git). The JSON also holds the context: cluster, profile, tags.
 
 ```text
-PASS  P1   demo operators subscribed | 13 expected
+PASS  P1   demo operators subscribed | 15 expected
 PASS  R4   Italian PII -> local (privacy) | HTTP 200 1.9s routed_to=local-fast by=privacy team=research ...
 WARN  P4   no unapproved InstallPlans | left unapproved by the pinning policy: gpu-operator-certified.v26.7.1
 ```
