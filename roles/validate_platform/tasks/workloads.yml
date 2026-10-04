@@ -169,6 +169,8 @@
       {{ validate_platform_isvcs.resources
          | selectattr('metadata.name', 'equalto', validate_platform_decision_isvc) | first | default({}) }}
   block:
+    # ready_pods: Ready and not being deleted. After a node restart a failed pod of the old
+    # ReplicaSet (UnexpectedAdmissionError, ContainerStatusUnknown) can stay next to the new one.
     - name: Read the decision model pod
       kubernetes.core.k8s_info:
         api_version: v1
@@ -185,14 +187,14 @@
         kind: Node
         name: "{{ _pod.spec.nodeName | default('none') }}"
       vars:
-        _pod: "{{ validate_platform_decision_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | first | default({}) }}"
+        _pod: "{{ validate_platform_decision_pods.resources | ready_pods | first | default({}) }}"
       register: validate_platform_decision_node
 
     # One question, a fixed text; the reply must hold a probability. Python: the image has no curl.
     - name: Ask the decision server one question
       kubernetes.core.k8s_exec:
         namespace: "{{ validation_models_namespace }}"
-        pod: "{{ (validate_platform_decision_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | first).metadata.name }}"
+        pod: "{{ (validate_platform_decision_pods.resources | ready_pods | first).metadata.name }}"
         container: "{{ validate_platform_decision_container }}"
         command: >-
           python3 -c 'import json, time, urllib.request as u;
@@ -206,7 +208,7 @@
       register: validate_platform_decision_answer
       changed_when: false
       failed_when: false
-      when: validate_platform_decision_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list | length > 0
+      when: validate_platform_decision_pods.resources | ready_pods | list | length > 0
 
     - name: Record P22 (decision model)
       ansible.builtin.set_fact:
