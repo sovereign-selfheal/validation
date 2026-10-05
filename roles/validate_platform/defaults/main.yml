@@ -5,6 +5,7 @@ validate_platform_operators:
   - {package: openshift-gitops-operator}
   - {package: openshift-cert-manager-operator}
   - {package: openshift-external-secrets-operator}
+  - {package: openshift-custom-metrics-autoscaler-operator}   # KEDA, keda_enabled (default true)
   - {package: rhbk-operator, profile: team}
   - {package: rhcl-operator}
   - {package: authorino-operator}
