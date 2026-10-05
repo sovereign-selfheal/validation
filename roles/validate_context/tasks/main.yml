@@ -59,6 +59,14 @@
   register: validation_key_info
   no_log: true
 
+- name: Read the LiteLLM Deployment
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ validation_router_namespace }}"
+    name: "{{ validation_litellm_deployment }}"
+  register: validation_litellm_info
+
 - name: Set the validation context
   ansible.builtin.set_fact:
     validation_ctx:
@@ -73,9 +81,17 @@
       secret_store_enabled: "{{ _values.secretStore.enabled | bool }}"
       decision_model_enabled: "{{ _values.decisionModel.enabled | default(false) | bool }}"
       team_access_enabled: "{{ validation_team_group_info.resources | length > 0 }}"
+      # Same rule as the router: unset or empty = the policy (on); 1, true, yes, on = on.
+      ner_enabled: "{{ _ner_env in ['', '1', 'true', 'yes', 'on'] }}"
     validation_results: []
     validation_seen_decisions: []
   vars:
+    _litellm_env: >-
+      {{ (((validation_litellm_info.resources | first | default({})).spec.template.spec.containers | default([]))
+          | selectattr('name', 'eq', validation_litellm_container) | first | default({})).env | default([]) }}
+    _ner_env: >-
+      {{ _litellm_env | selectattr('name', 'eq', 'NER_ENABLED') | map(attribute='value', default='')
+         | first | default('') | string | trim | lower }}
     _infra: "{{ validation_infrastructure.resources[0] | default({}) }}"
     _domain: "{{ validation_ingress_config.resources[0].spec.domain }}"
     _values: >-

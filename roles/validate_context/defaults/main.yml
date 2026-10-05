@@ -19,6 +19,11 @@ validation_team_group: selfheal-team
 # Public route of the router: https://<prefix>.<apps domain>/v1/chat/completions
 validation_router_host_prefix: router
 
+# LiteLLM Deployment of the router. Its env var NER_ENABLED (router v0.10.0) says if C1
+# (Presidio NER) is on; unset or empty: on, as in the gitops policy (ner.enabled: true).
+validation_litellm_deployment: litellm
+validation_litellm_container: litellm
+
 # API keys of the tiers, generated in the cluster by ESO (Secret name, key api_key).
 validation_key_secrets:
   research: apikey-research-1

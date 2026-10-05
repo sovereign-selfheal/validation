@@ -13,6 +13,9 @@
 #                          sota-smart points to the local model, the decision is the same)
 #   expect.decided_by      efficiency | privacy | all-sota | tiering
 #   expect.reason_contains optional list of strings that must be in the decision reason
+#   expect.ner_reason_contains optional list, like reason_contains, checked only when C1
+#                          (Presidio NER) is on. With the decision model the gitops repo turns
+#                          C1 off (NER_ENABLED=0 in the LiteLLM Deployment, router v0.10.0)
 #   tools                  optional OpenAI tool definitions sent with the request
 #   expect.tool_call       optional: the answer must call this tool
 #   expect.content_excludes optional list of strings that must not be in the answer text
@@ -104,19 +107,20 @@ routing_cases:
 
 # Demo prompts (router v0.4.0 or later: ner.person_min_words, ner.context_entities).
 # Generic questions that name places, nationalities or single words that look like names go
-# to SOTA; a full name with a personal detail stays local.
+# to SOTA; a full name with a personal detail stays local. With C1 off (decision model) the same
+# prompts route the same way, without the Presidio labels in the reason (ner_reason_contains).
 demo_cases:
   - id: D1
     name: European + Italy -> SOTA (NRP without an identifier)
     prompt: Compare European and American cloud regulations for banks operating in Italy.
     max_tokens: 60
-    expect: {routed_to: sota-smart, reason_contains: ["(no id)"]}
+    expect: {routed_to: sota-smart, ner_reason_contains: ["(no id)"]}
 
   - id: D2
     name: Italian banks + mortgage -> SOTA
     prompt: Explain why Italian banks should keep mortgage data on premises.
     max_tokens: 60
-    expect: {routed_to: sota-smart, reason_contains: ["(no id)"]}
+    expect: {routed_to: sota-smart, ner_reason_contains: ["(no id)"]}
 
   - id: D3
     name: Kafka -> SOTA
@@ -130,7 +134,7 @@ demo_cases:
       Analyze in depth the history of distributed consensus: Paxos, Viewstamped Replication, Raft, and
       Byzantine protocols.
     max_tokens: 60
-    expect: {routed_to: sota-smart, reason_contains: ["(<2 words)"]}
+    expect: {routed_to: sota-smart, ner_reason_contains: ["(<2 words)"]}
 
   - id: D5
     name: Cassandra -> SOTA
@@ -142,7 +146,7 @@ demo_cases:
     name: Spiega + mutuo -> SOTA
     prompt: Spiega perché un mutuo a tasso fisso conviene quando i tassi salgono.
     max_tokens: 60
-    expect: {routed_to: sota-smart, reason_contains: ["(<2 words)"]}
+    expect: {routed_to: sota-smart, ner_reason_contains: ["(<2 words)"]}
 
   - id: D7
     name: full name + nationality + place -> local

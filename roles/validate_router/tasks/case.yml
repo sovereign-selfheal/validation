@@ -73,6 +73,10 @@
         _decisions: "{{ validate_router_decision.decisions | default([]) }}"
         _d: "{{ validate_router_decision.decision | default({}) }}"
         _reason: "{{ _d.reason | default('') }}"
+        # ner_reason_contains: labels of C1 (Presidio NER), checked only when C1 is on.
+        _reason_needles: >-
+          {{ _expect.reason_contains | default([])
+             + (_expect.ner_reason_contains | default([]) if validation_ctx.ner_enabled | bool else []) }}
         _secs: "{{ '%.1f' | format(validate_router_resp.elapsed | default(0) | float) }}"
         _message: "{{ (validate_router_resp.json | default({})).choices | default([{}]) | first | default({}) }}"
         _content: "{{ (_message.message | default({})).content | default('', true) }}"
@@ -93,7 +97,7 @@
           - "{{ _expect.routed_to is undefined or _d.routed_to | default('') == _expect.routed_to }}"
           - "{{ _expect.decided_by is undefined or _d.decided_by | default('') == _expect.decided_by }}"
           - "{{ _expect.team is undefined or _d.team | default('') == _expect.team }}"
-          - "{{ _expect.reason_contains | default([]) | reject('in', _reason) | list | length == 0 }}"
+          - "{{ _reason_needles | reject('in', _reason) | list | length == 0 }}"
           - "{{ _expect.tool_call is undefined or _expect.tool_call in _tool_calls }}"
           - "{{ _expect.content_excludes | default([]) | select('in', _content) | list | length == 0 }}"
           - "{{ _want_status | int != 200 or _d | length > 0 }}"

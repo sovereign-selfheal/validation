@@ -5,7 +5,8 @@
   ansible.builtin.debug:
     msg: >-
       Router checks on {{ validation_ctx.url }} (SOTA {{ 'on' if validation_ctx.sota_enabled | bool else 'off: sota-smart
-      is served by the local model' }}, classifier {{ validation_ctx.classifier_mode }})
+      is served by the local model' }}, classifier {{ validation_ctx.classifier_mode }},
+      Presidio NER {{ 'on' if validation_ctx.ner_enabled | bool else 'off' }})
   tags: [access, routing, demo]
 
 - name: Load the routing cases
