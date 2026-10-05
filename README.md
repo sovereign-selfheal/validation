@@ -52,6 +52,10 @@ Things to know:
   model. The routing decisions are the same, so `routing` and `demo` still apply; the `sota`
   group is skipped.
 - **Classifier off.** With `classifier.mode: off`, R6b and R6c are skipped.
+- **Presidio NER off.** With the decision model, the gitops repo turns C1 off
+  (`NER_ENABLED=0` in the LiteLLM Deployment, router v0.10.0). The validation reads that
+  variable: when C1 is off, the Presidio labels of D1, D2, D4 and D6 (`ner_reason_contains`) are
+  not checked; their routing decisions are.
 - **One run at a time.** The routing decision is read from the `[policy-router]` log lines of
   LiteLLM. Other traffic during a run can make a routing case ambiguous (the detail says so).
 - **Changes.** `platform`, `access`, `routing` and `demo` are read-only (changed=0).
