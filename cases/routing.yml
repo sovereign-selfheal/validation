@@ -11,7 +11,7 @@
 #   max_tokens             optional, default validate_router_max_tokens
 #   expect.routed_to       local-fast | sota-smart (the alias name; in local-only mode
 #                          sota-smart points to the local model, the decision is the same)
-#   expect.decided_by      efficiency | privacy | all-sota | tiering
+#   expect.decided_by      namespace | efficiency | privacy | all-sota | tiering
 #   expect.reason_contains optional list of strings that must be in the decision reason
 #   expect.ner_reason_contains optional list, like reason_contains, checked only when C1
 #                          (Presidio NER) is on. With the decision model the gitops repo turns
@@ -19,7 +19,8 @@
 #   tools                  optional OpenAI tool definitions sent with the request
 #   expect.tool_call       optional: the answer must call this tool
 #   expect.content_excludes optional list of strings that must not be in the answer text
-#   requires               optional list: classifier (skipped when classifier.mode is off)
+#   requires               optional list: classifier (skipped when classifier.mode is off),
+#                          namespace_hint / namespace_scan / namespace_policy (see namespace_cases)
 
 routing_cases:
   - id: R1
@@ -109,6 +110,74 @@ routing_cases:
 # Generic questions that name places, nationalities or single words that look like names go
 # to SOTA; a full name with a personal detail stays local. With C1 off (decision model) the same
 # prompts route the same way, without the Presidio labels in the reason (ner_reason_contains).
+# Namespace policy (router v0.11.0): a request about a namespace labelled
+# sovereign-selfheal.io/data-class=restricted stays LOCAL before the gates. The ansible repo labels
+# payments restricted and agentic-triage public. Extra fields:
+#   hint                   list sent as the body field selfheal_namespaces (what the agents send)
+#   expect.ns_restricted   the restricted namespaces of the decision line
+#   expect.decided_by_not  the decision must not come from this gate or policy
+# requires: namespace_hint / namespace_scan / namespace_policy skip a case when that switch is off.
+# The normal-routing cases use the prompt of R2: the gates may still send it LOCAL (C2), so they
+# only check that the namespace policy did not decide.
+namespace_cases:
+  - id: N1
+    name: restricted namespace from the agent hint -> local, no gate
+    hint: [payments]
+    prompt: >-
+      Analyze the trade-offs between event sourcing and a classic CRUD model for an order management
+      system. Explain why each one fits or not, with a short example.
+    max_tokens: 60
+    requires: [namespace_hint]
+    expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
+
+  - id: N2
+    name: public namespace from the agent hint -> normal routing
+    hint: [agentic-triage]
+    prompt: >-
+      Analyze the trade-offs between event sourcing and a classic CRUD model for an order management
+      system. Explain why each one fits or not, with a short example.
+    max_tokens: 60
+    requires: [namespace_hint]
+    expect: {decided_by_not: namespace, ns_restricted: []}
+
+  - id: N3
+    name: public hint, but the text reads a restricted namespace -> local (scan)
+    hint: [agentic-triage]
+    prompt: >-
+      Analyze the error rate of the orders API and explain why it changed. Tool output of
+      query_prometheus: rate(http_server_requests_seconds_count{namespace="payments",status="500"}[5m]) = 0.4
+    max_tokens: 60
+    requires: [namespace_scan]
+    expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
+
+  - id: N4
+    name: alert labels of the translator prompt, no hint -> local (scan)
+    prompt: >-
+      An automated alert was fired in the cluster. Investigate and follow the standard triage workflow.
+      Labels: - `alertname`: QuarkusBuggyAppHighErrorRate - `namespace`: payments - `severity`: warning
+    max_tokens: 60
+    requires: [namespace_scan]
+    expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
+
+  - id: N5
+    name: no namespace in the request -> normal routing
+    prompt: >-
+      Analyze the trade-offs between event sourcing and a classic CRUD model for an order management
+      system. Explain why each one fits or not, with a short example.
+    max_tokens: 60
+    requires: [namespace_policy]
+    expect: {decided_by_not: namespace, ns_restricted: []}
+
+  - id: N6
+    name: hint with a namespace that does not exist -> normal routing
+    hint: [no-such-namespace]
+    prompt: >-
+      Analyze the trade-offs between event sourcing and a classic CRUD model for an order management
+      system. Explain why each one fits or not, with a short example.
+    max_tokens: 60
+    requires: [namespace_hint]
+    expect: {decided_by_not: namespace, ns_restricted: []}
+
 demo_cases:
   - id: D1
     name: European + Italy -> SOTA (NRP without an identifier)

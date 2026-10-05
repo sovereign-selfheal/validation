@@ -5,7 +5,7 @@
 #   uv run ansible-playbook playbooks/validate.yml -e validation_disruptive=true  # all groups
 #   uv run ansible-playbook playbooks/validate.yml --tags routing,demo            # some groups
 #
-# Default groups: platform, isolation, access, routing, demo.
+# Default groups: platform, isolation, access, routing, namespace, demo.
 # Disruptive groups (validation_disruptive=true, or named with --tags): sota, parallel,
 # legal, context, failover, decision, selfheal.
 - name: Validate the Sovereign Self-Healing Platform demo

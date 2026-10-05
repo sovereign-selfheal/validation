@@ -1,0 +1,170 @@
+---
+# Namespace policy of the router (router v0.11.0): a request about a namespace labelled
+# sovereign-selfheal.io/data-class=restricted stays on the local model. The ansible repo labels the
+# demo namespaces and binds get/list/watch on namespaces to the LiteLLM ServiceAccount; the gitops
+# repo turns the policy on (env NAMESPACE_SCAN_ENABLED / NAMESPACE_HINT_ENABLED).
+- name: Read the demo namespaces
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Namespace
+    name: "{{ _ns }}"
+  loop: "{{ validate_platform_data_class_expected | list }}"
+  loop_control:
+    loop_var: _ns
+  register: validate_platform_demo_namespaces
+
+- name: Read the namespace reader ClusterRole
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRole
+    name: "{{ validate_platform_namespace_reader_role }}"
+  register: validate_platform_ns_reader_role
+
+- name: Read the namespace reader bindings
+  kubernetes.core.k8s_info:
+    api_version: rbac.authorization.k8s.io/v1
+    kind: ClusterRoleBinding
+    name: "{{ _crb }}"
+  loop: "{{ validate_platform_namespace_reader_bindings | list }}"
+  loop_control:
+    loop_var: _crb
+  register: validate_platform_ns_reader_crbs
+
+- name: Read the LiteLLM pods
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validation_router_namespace }}"
+    label_selectors: ["app=litellm"]
+    field_selectors: [status.phase=Running]
+  register: validate_platform_litellm_pods
+
+# With the policy on, each LiteLLM pod must have read the labels (router metrics on :9091).
+# Python: the LiteLLM image has no curl.
+- name: Read the namespace metrics of each LiteLLM pod
+  kubernetes.core.k8s_exec:
+    namespace: "{{ validation_router_namespace }}"
+    pod: "{{ _pod.metadata.name }}"
+    container: "{{ validation_litellm_container }}"
+    command: >-
+      python3 -c 'import urllib.request as u;
+      t = u.urlopen("http://127.0.0.1:{{ validate_platform_router_metrics_port }}/metrics", timeout=10).read().decode();
+      print("\n".join(l for l in t.splitlines() if l.startswith("router_namespace_labels")))'
+  loop: "{{ validate_platform_litellm_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
+  loop_control:
+    loop_var: _pod
+    label: "{{ _pod.metadata.name }}"
+  register: validate_platform_ns_metrics
+  changed_when: false
+  failed_when: false
+  when: validation_ctx.namespace_scan_enabled | bool or validation_ctx.namespace_hint_enabled | bool
+
+- name: Record P24 (namespace labels, reader RBAC and labels read by the router)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _policy_on: "{{ validation_ctx.namespace_scan_enabled | bool or validation_ctx.namespace_hint_enabled | bool }}"
+    _labels: >-
+      {%- set out = {} -%}
+      {%- for res in validate_platform_demo_namespaces.results -%}
+      {%- set ns = res.resources | first | default({}) -%}
+      {%- set labels = (ns.metadata | default({})).labels | default({}) -%}
+      {%- set _ = out.update({res._ns: labels.get(validate_platform_data_class_label, 'missing' if ns else 'no namespace')}) -%}
+      {%- endfor -%}
+      {{ out | to_json }}
+    _labels_ok: "{{ (_labels | from_json) == validate_platform_data_class_expected }}"
+    _rules: "{{ (validate_platform_ns_reader_role.resources | first | default({})).rules | default([]) }}"
+    _role_ok: >-
+      {{ _rules | selectattr('resources', 'contains', 'namespaces')
+         | selectattr('verbs', 'contains', 'list') | list | length > 0 }}
+    _crb_bad: >-
+      {%- set bad = [] -%}
+      {%- for res in validate_platform_ns_reader_crbs.results -%}
+      {%- set crb = res.resources | first | default({}) -%}
+      {%- set sa = validate_platform_namespace_reader_bindings[res._crb] -%}
+      {%- set subj = crb.subjects | default([]) | selectattr('kind', 'eq', 'ServiceAccount')
+            | selectattr('name', 'eq', sa) | selectattr('namespace', 'eq', validation_router_namespace) | list -%}
+      {%- if not crb or (crb.roleRef | default({})).name != validate_platform_namespace_reader_role or not subj -%}
+      {%- set _ = bad.append(res._crb) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ bad | to_json }}
+    _pods: "{{ validate_platform_litellm_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
+    _sa_bad: "{{ _pods | rejectattr('spec.serviceAccountName', 'eq', 'litellm') | map(attribute='metadata.name') | list }}"
+    _metrics: "{{ validate_platform_ns_metrics.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+    _not_loaded: >-
+      {{ _metrics | rejectattr('stdout', 'search', '(?m)^router_namespace_labels_loaded 1') | map(attribute='_pod.metadata.name') | list }}
+    _restricted: >-
+      {{ _metrics | map(attribute='stdout') | map('regex_search', 'router_namespace_labels\{state="restricted"\} ([0-9.]+)', '\1')
+         | map('first') | map('float') | list }}
+    _loaded_ok: "{{ not _policy_on | bool or (_metrics | length > 0 and _not_loaded | length == 0 and (_restricted | min) >= 1) }}"
+    _r:
+      group: platform
+      id: P24
+      name: namespace policy labels, reader RBAC and labels read by the router
+      status: >-
+        {{ 'PASS' if _labels_ok | bool and _role_ok | bool and (_crb_bad | from_json | length == 0)
+                     and _sa_bad | length == 0 and _loaded_ok | bool else 'FAIL' }}
+      detail: >-
+        labels {{ (_labels | from_json).items() | map('join', '=') | join(', ') }};
+        ClusterRole {{ 'ok' if _role_ok | bool else 'missing or without list namespaces' }};
+        bindings {{ 'ok' if (_crb_bad | from_json | length == 0) else 'wrong: ' ~ (_crb_bad | from_json | join(', ')) }};
+        {{ _pods | length }} LiteLLM pod(s){{ ' not on ServiceAccount litellm: ' ~ _sa_bad | join(', ') if _sa_bad else ' on ServiceAccount litellm' }};
+        policy {{ 'on (scan ' ~ validation_ctx.namespace_scan_enabled ~ ', hint ' ~ validation_ctx.namespace_hint_enabled ~ ')'
+                  if _policy_on | bool else 'off: labels not read by the router' }}{{
+        ('; labels read in ' ~ (_metrics | length - _not_loaded | length) ~ '/' ~ _metrics | length ~ ' pod(s), restricted '
+         ~ (_restricted | join('/'))) if _policy_on | bool else '' }}
+
+# The live page of the routing decisions: oauth-proxy answers, and the page needs a sign-in.
+- name: Read the live page Deployment
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ validation_router_namespace }}"
+    name: "{{ validate_platform_live_view_name }}"
+  register: validate_platform_live_view
+
+- name: Read the live page Route
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: "{{ validation_router_namespace }}"
+    name: "{{ validate_platform_live_view_name }}"
+  register: validate_platform_live_view_route
+
+- name: Call the live page without a sign-in
+  ansible.builtin.uri:
+    url: "https://{{ _host }}{{ _path }}"
+    follow_redirects: none
+    validate_certs: "{{ validation_validate_certs }}"
+    status_code: [200, 302, 401, 403, 503]
+    timeout: 20
+  vars:
+    _host: "{{ (validate_platform_live_view_route.resources | first).spec.host }}"
+  loop: [/oauth/healthz, /api/state]
+  loop_control:
+    loop_var: _path
+  register: validate_platform_live_view_calls
+  failed_when: false
+  when: validate_platform_live_view_route.resources | length > 0
+
+- name: Record P25 (live page of the routing decisions)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _dep: "{{ validate_platform_live_view.resources | first | default({}) }}"
+    _ready: "{{ (_dep.status | default({})).readyReplicas | default(0) | int }}"
+    _calls: "{{ validate_platform_live_view_calls.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+    _health: "{{ (_calls | selectattr('_path', 'eq', '/oauth/healthz') | first | default({})).status | default(-1) }}"
+    _api: "{{ (_calls | selectattr('_path', 'eq', '/api/state') | first | default({})).status | default(-1) }}"
+    _r:
+      group: platform
+      id: P25
+      name: live page of the routing decisions answers behind the OpenShift sign-in
+      status: >-
+        {{ 'SKIP' if not _dep else ('PASS' if _ready | int >= 1 and _health | int == 200 and _api | int in [302, 401, 403]
+                                    else 'FAIL') }}
+      detail: >-
+        {{ 'component routing-live-view not deployed' if not _dep else
+           (_ready | string) ~ ' ready replica(s); /oauth/healthz HTTP ' ~ _health ~ '; /api/state without sign-in HTTP ' ~ _api
+           ~ (' (expected 302/401/403)' if _api | int not in [302, 401, 403] else '') }}

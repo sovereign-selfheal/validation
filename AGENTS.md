@@ -26,7 +26,7 @@ Every check exists **once**: in Ansible, or in `harness/load.py`, never in both.
 ## 3. Rules
 
 - **Read-only by default.** The default groups (`platform`, `isolation`, `access`, `routing`,
-  `demo`) must not change any workload. `isolation` may create and delete its own temporary
+  `namespace`, `demo`) must not change any workload. `isolation` may create and delete its own temporary
   namespace. Anything that loads the cluster, uses up a token budget or changes a managed object
   is a *disruptive* group: it runs only with `validation_disruptive: true` or when its tag is
   named with `--tags` (`when: validation_disruptive | bool or '<tag>' in ansible_run_tags`).
@@ -45,7 +45,7 @@ Every check exists **once**: in Ansible, or in `harness/load.py`, never in both.
   Keep the API keys out of the logs (`no_log: true` on tasks that carry them; environment
   variables for the harness, never command-line arguments).
 - **Unique ids.** Each check has a unique id: `P` platform, `I` isolation, `A` access, `R` routing,
-  `D` demo, `S` sota, `C` parallel (concurrency), `L` legal, `K` context (agents' large
+  `D` demo, `N` namespace policy, `S` sota, `C` parallel (concurrency), `L` legal, `K` context (agents' large
   contexts), `F` failover, `H` self-heal;
   `X` is reserved for an aborted run.
 - **Numbers from `-e` are strings.** Compare an overridable number with `| int`
@@ -95,6 +95,10 @@ this repo in the same change set.
   - Root Application values read by `validate_context`: `modelProfile`, `sota.enabled`,
     `classifier.mode`, `observability.enabled`, `secretStore.enabled`, `decisionModel.enabled`.
   - Tiers: the legal budget (20,000 tokens / 5 minutes) drives L1.
+  - Namespace policy (router v0.11.0): the LiteLLM env `NAMESPACE_SCAN_ENABLED` /
+    `NAMESPACE_HINT_ENABLED` (read by `validate_context`), ServiceAccount `litellm`, router metrics
+    `router_namespace_labels_loaded` and `router_namespace_labels` on port 9091 (P24); component
+    `routing-live-view` in `maas-routing` with its oauth-proxy (P25).
 - **`router` repo.** The format of the `[policy-router] {...}` log line (a Python dict repr with
   `routed_to`, `decided_by`, `reason`, `team`, `trace_id`). The parser is
   `roles/validate_router/module_utils/policy_router.py`; its tests are in `tests/`.
@@ -106,7 +110,10 @@ this repo in the same change set.
   Application `openshift-gitops/sovereign-selfheal`, the Kuadrant metrics of P20 (PodMonitor
   `kuadrant-system/limitador`, ServiceMonitor `kuadrant-system/authorino`, TelemetryPolicy
   `openshift-ingress/openshift-ai-inference-labels`, no `istio-pod-monitor`), the retention (15d) and
-  the volumes of the user workload Prometheus (P21).
+  the volumes of the user workload Prometheus (P21), the `sovereign-selfheal.io/data-class` labels
+  (`agentic-triage` public, `payments` restricted), the ClusterRole
+  `sovereign-selfheal-namespace-reader` and its bindings `litellm-namespace-reader` and
+  `routing-live-view-namespace-reader` (P24, N1-N6).
 
 ## 6. Out of scope
 
