@@ -148,6 +148,48 @@
         profile {{ 'present' if _profile else 'missing' }}{{ ', identifiers: ' ~ _ids | join(', ') if _profile else '' }};
         ISVC annotation {{ (_linked_ns ~ '/' ~ _linked_name) if _linked_name else 'missing' }}
 
+# gitops charts local-model and decision-model: the RHOAI dashboard names a ServingRuntime from its
+# annotation opendatahub.io/template-display-name, then opendatahub.io/template-name; without both it
+# shows "Unknown Serving Runtime" (dashboard of RHOAI 3.5, servingRuntimeUtils.ts).
+- name: Read the ServingRuntimes of the model namespace
+  kubernetes.core.k8s_info:
+    api_version: serving.kserve.io/v1alpha1
+    kind: ServingRuntime
+    namespace: "{{ validation_models_namespace }}"
+    label_selectors: ["opendatahub.io/dashboard=true"]
+  register: validate_platform_runtimes
+
+- name: Record P23 (serving runtime names in the RHOAI dashboard)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _runtimes: "{{ validate_platform_runtimes.resources }}"
+    # The annotation keys contain dots, so a loop (not selectattr) reads them. `shown`: what the
+    # dashboard prints for each runtime; `missing`: the runtimes without template-display-name.
+    _info: >-
+      {%- set shown = [] -%}
+      {%- set missing = [] -%}
+      {%- for rt in _runtimes -%}
+      {%- set ann = rt.metadata.annotations | default({}) -%}
+      {%- set _s = shown.append(rt.metadata.name ~ ': ' ~ ann.get('opendatahub.io/template-display-name',
+          ann.get('opendatahub.io/template-name', 'Unknown Serving Runtime'))) -%}
+      {%- if 'opendatahub.io/template-display-name' not in ann -%}
+      {%- set _m = missing.append(rt.metadata.name) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ {'shown': shown, 'missing': missing} | to_json }}
+    _shown: "{{ (_info | from_json).shown }}"
+    _missing: "{{ (_info | from_json).missing }}"
+    _r:
+      group: platform
+      id: P23
+      name: Serving runtimes have a name in the RHOAI dashboard
+      status: "{{ 'PASS' if _runtimes | length > 0 and _missing | length == 0 else 'FAIL' }}"
+      detail: >-
+        {{ 'no ServingRuntime with the label opendatahub.io/dashboard=true' if not _runtimes
+           else _shown | join('; ') }}{{ ' (no opendatahub.io/template-display-name: '
+           ~ _missing | join(', ') ~ ')' if _missing else '' }}
+
 # gitops chart decision-model: the InferenceService is Ready, linked to its hardware profile, runs
 # on the gpu-decision pool, and the decision server answers one yes/no question with a probability.
 - name: Record P22 (decision model), skipped when it is off
