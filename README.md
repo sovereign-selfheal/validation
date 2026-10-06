@@ -30,7 +30,7 @@ of the tiers (from the Secrets that ESO creates).
 | `isolation` | I0-I5: a probe pod in a temporary namespace cannot reach LiteLLM, Presidio or the local model; Presidio has no egress (IP and DNS) | yes |
 | `access` | A1-A3: no key and invalid key get 401; the tier comes from the key, not from the `x-team` header | yes |
 | `routing` | R1-R8: short, complex, Italian, PII, implicit sensitivity (lexicon and C2 classifier), prompt injection, agent tool call | yes |
-| `namespace` | N1-N6: namespace policy of router v0.11.0: a restricted namespace from the agent hint or from the text stays local before the gates; public, unknown or no namespace keep the normal routing. A case is SKIP when its switch (`namespacePolicy.scan`/`hint`) is off | yes |
+| `namespace` | N1-N8: namespace policy of router v0.11.0: a restricted namespace from the agent hint or from the text stays local before the gates; public, unknown or no namespace keep the normal routing. N7 and N8 need router v0.11.1: PromQL in JSON tool call arguments (escaped quotes) and a regex matcher with two namespaces. A case is SKIP when its switch (`namespacePolicy.scan`/`hint`) is off | yes |
 | `demo` | D1-D8: the prompts of the demo video (router v0.4.0 or later) | yes |
 | `sota` | S1-S3: long SOTA answer, reasoning on per request, streaming with usage | no |
 | `parallel` | C1: 5 concurrent calls to the local model | no |

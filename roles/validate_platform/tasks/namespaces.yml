@@ -90,14 +90,29 @@
       {%- endfor -%}
       {{ bad | to_json }}
     _pods: "{{ validate_platform_litellm_pods.resources | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
-    _sa_bad: "{{ _pods | rejectattr('spec.serviceAccountName', 'eq', 'litellm') | map(attribute='metadata.name') | list }}"
+    # The ServiceAccount litellm comes with the gitops namespace policy: checked only when it is on.
+    _sa_bad: >-
+      {{ (_pods | rejectattr('spec.serviceAccountName', 'eq', 'litellm') | map(attribute='metadata.name') | list)
+         if _policy_on | bool else [] }}
     _metrics: "{{ validate_platform_ns_metrics.results | default([]) | rejectattr('skipped', 'defined') | list }}"
-    _not_loaded: >-
-      {{ _metrics | rejectattr('stdout', 'search', '(?m)^router_namespace_labels_loaded 1') | map(attribute='_pod.metadata.name') | list }}
-    _restricted: >-
-      {{ _metrics | map(attribute='stdout') | map('regex_search', 'router_namespace_labels\{state="restricted"\} ([0-9.]+)', '\1')
-         | map('first') | map('float') | list }}
-    _loaded_ok: "{{ not _policy_on | bool or (_metrics | length > 0 and _not_loaded | length == 0 and (_restricted | min) >= 1) }}"
+    # One row per pod. A failed exec (pod starting, timeout) has no stdout and gives a FAIL, not an error.
+    _metric_rows: >-
+      {%- set rows = [] -%}
+      {%- for m in _metrics -%}
+      {%- set out = m.stdout | default('', true) | string -%}
+      {%- set found = out | regex_search('router_namespace_labels\{state="restricted"\} ([0-9.]+)', '\\1') -%}
+      {%- set _ = rows.append({'pod': m._pod.metadata.name,
+                               'loaded': out is search('(?m)^router_namespace_labels_loaded 1'),
+                               'restricted': (found | first | float) if found else none}) -%}
+      {%- endfor -%}
+      {{ rows | to_json }}
+    _not_loaded: "{{ _metric_rows | from_json | rejectattr('loaded') | map(attribute='pod') | list }}"
+    _restricted: "{{ _metric_rows | from_json | map(attribute='restricted') | list }}"
+    _restricted_text: "{{ _restricted | map('regex_replace', '^None$', 'missing') | join('/') }}"
+    _loaded_ok: >-
+      {{ not _policy_on | bool
+         or (_metrics | length > 0 and _not_loaded | length == 0 and _restricted | select('none') | list | length == 0
+             and (_restricted | min) >= 1) }}
     _r:
       group: platform
       id: P24
@@ -109,11 +124,12 @@
         labels {{ (_labels | from_json).items() | map('join', '=') | join(', ') }};
         ClusterRole {{ 'ok' if _role_ok | bool else 'missing or without list namespaces' }};
         bindings {{ 'ok' if (_crb_bad | from_json | length == 0) else 'wrong: ' ~ (_crb_bad | from_json | join(', ')) }};
-        {{ _pods | length }} LiteLLM pod(s){{ ' not on ServiceAccount litellm: ' ~ _sa_bad | join(', ') if _sa_bad else ' on ServiceAccount litellm' }};
+        {{ _pods | length }} LiteLLM pod(s){{ (' not on ServiceAccount litellm: ' ~ _sa_bad | join(', ') if _sa_bad
+           else ' on ServiceAccount litellm') if _policy_on | bool else '' }};
         policy {{ 'on (scan ' ~ validation_ctx.namespace_scan_enabled ~ ', hint ' ~ validation_ctx.namespace_hint_enabled ~ ')'
                   if _policy_on | bool else 'off: labels not read by the router' }}{{
         ('; labels read in ' ~ (_metrics | length - _not_loaded | length) ~ '/' ~ _metrics | length ~ ' pod(s), restricted '
-         ~ (_restricted | join('/'))) if _policy_on | bool else '' }}
+         ~ _restricted_text) if _policy_on | bool else '' }}
 
 # The live page of the routing decisions: oauth-proxy answers, and the page needs a sign-in.
 - name: Read the live page Deployment

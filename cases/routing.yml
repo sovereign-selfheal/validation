@@ -178,6 +178,26 @@ namespace_cases:
     requires: [namespace_hint]
     expect: {decided_by_not: namespace, ns_restricted: []}
 
+  # Router v0.11.1: the scan reads JSON-encoded tool call arguments (escaped quotes) and every
+  # alternative of a regex matcher. Router v0.11.0 sends both to the normal routing (FAIL).
+  - id: N7
+    name: PromQL in JSON tool call arguments (escaped quotes), no hint -> local (scan)
+    prompt: >-
+      Investigate why the orders API returns errors. Tool call query_prometheus with the arguments
+      {"query": "sum(rate(http_server_requests_seconds_count{namespace=\"payments\",status=~\"5..\"}[5m]))"}
+    max_tokens: 60
+    requires: [namespace_scan]
+    expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
+
+  - id: N8
+    name: regex matcher with a public and a restricted namespace -> local (scan)
+    prompt: >-
+      Compare the error rates of the two demo applications and explain the difference:
+      sum by (namespace) (rate(http_server_requests_seconds_count{namespace=~"agentic-triage|payments",status=~"5.."}[5m]))
+    max_tokens: 60
+    requires: [namespace_scan]
+    expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
+
 demo_cases:
   - id: D1
     name: European + Italy -> SOTA (NRP without an identifier)

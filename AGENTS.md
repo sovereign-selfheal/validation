@@ -113,7 +113,7 @@ this repo in the same change set.
   the volumes of the user workload Prometheus (P21), the `sovereign-selfheal.io/data-class` labels
   (`agentic-triage` public, `payments` restricted), the ClusterRole
   `sovereign-selfheal-namespace-reader` and its bindings `litellm-namespace-reader` and
-  `routing-live-view-namespace-reader` (P24, N1-N6).
+  `routing-live-view-namespace-reader` (P24, N1-N8).
 
 ## 6. Out of scope
 
