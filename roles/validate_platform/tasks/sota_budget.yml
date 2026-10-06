@@ -71,7 +71,7 @@
                                      and (_bad | from_json | length == 0) else 'FAIL') }}
       detail: >-
         {{ 'SOTA budget off (no SOTA_BUDGET_TIERS on LiteLLM)' if not _tiers else
-           'budgets ' ~ (_tiers | dict2items | map('join', '=') | join(', ')) ~ '; Redis '
+           'budgets ' ~ (_tiers.items() | map('join', '=') | join(', ')) ~ '; Redis '
            ~ validate_platform_budget_redis_name ~ ' ' ~ (_ready | string) ~ ' ready replica(s); '
            ~ (((_execs | length) ~ ' LiteLLM pod(s) reach Redis and export the budgets')
               if (_bad | from_json | length == 0) else ('problems: ' ~ (_bad | from_json | join('; ')))) }}
