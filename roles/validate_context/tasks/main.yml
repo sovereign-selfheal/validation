@@ -59,6 +59,18 @@
   register: validation_key_info
   no_log: true
 
+- name: Read the optional API keys
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Secret
+    namespace: "{{ validation_router_namespace }}"
+    name: "{{ item.value }}"
+  loop: "{{ validation_optional_key_secrets | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  register: validation_optional_key_info
+  no_log: true
+
 - name: Read the LiteLLM Deployment
   kubernetes.core.k8s_info:
     api_version: apps/v1
@@ -87,6 +99,9 @@
       # turns them on with these env vars (namespacePolicy.scan/hint of the root Application).
       namespace_scan_enabled: "{{ _ns_scan_env in ['1', 'true', 'yes', 'on'] }}"
       namespace_hint_enabled: "{{ _ns_hint_env in ['1', 'true', 'yes', 'on'] }}"
+      # SOTA budget per tier (router v0.12.0): the gitops repo sets SOTA_BUDGET_TIERS (JSON) on
+      # LiteLLM only with sotaBudget.enabled. {} = off.
+      sota_budget_tiers: "{{ _budget_env | from_json if _budget_env is match('^\\s*\\{') else {} }}"
     validation_results: []
     validation_seen_decisions: []
   vars:
@@ -99,6 +114,9 @@
     _ns_scan_env: >-
       {{ _litellm_env | selectattr('name', 'eq', 'NAMESPACE_SCAN_ENABLED') | map(attribute='value', default='')
          | first | default('') | string | trim | lower }}
+    _budget_env: >-
+      {{ _litellm_env | selectattr('name', 'eq', 'SOTA_BUDGET_TIERS') | map(attribute='value', default='')
+         | first | default('') | string | trim }}
     _ns_hint_env: >-
       {{ _litellm_env | selectattr('name', 'eq', 'NAMESPACE_HINT_ENABLED') | map(attribute='value', default='')
          | first | default('') | string | trim | lower }}
@@ -127,6 +145,18 @@
       API key Secrets missing in {{ validation_router_namespace }}: expected
       {{ validation_key_secrets.values() | join(', ') }} (ESO creates them; check the ExternalSecrets).
     quiet: true
+
+- name: Keep the optional API keys (not logged)
+  ansible.builtin.set_fact:
+    validation_keys: >-
+      {{ validation_keys | combine(dict(validation_optional_key_info.results
+              | selectattr('resources', 'truthy')
+              | map(attribute='item.key')
+              | zip(validation_optional_key_info.results
+                    | selectattr('resources', 'truthy')
+                    | map(attribute='resources.0.data.api_key')
+                    | map('b64decode')))) }}
+  no_log: true
 
 - name: Show the validation context
   ansible.builtin.debug:

@@ -1,0 +1,77 @@
+---
+# SOTA budget per tier (router v0.12.0, gitops sotaBudget.enabled): the Redis of the counters is
+# ready, every LiteLLM pod reaches it with its own settings (env SOTA_BUDGET_REDIS_URL/PASSWORD) and
+# exports the budget of every tier. SKIP when the budget is off (no SOTA_BUDGET_TIERS on LiteLLM).
+- name: Read the Redis Deployment of the SOTA budget
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: "{{ validation_router_namespace }}"
+    name: "{{ validate_platform_budget_redis_name }}"
+  register: validate_platform_budget_redis
+  when: validation_ctx.sota_budget_tiers | default({}) | length > 0
+
+- name: Read the LiteLLM pods for the budget check
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validation_router_namespace }}"
+    label_selectors: ["app=litellm"]
+  register: validate_platform_budget_pods
+  when: validation_ctx.sota_budget_tiers | default({}) | length > 0
+
+# Python: the LiteLLM image has redis-py and no redis-cli or curl.
+- name: Ping Redis and read the budget metrics from each LiteLLM pod
+  kubernetes.core.k8s_exec:
+    namespace: "{{ validation_router_namespace }}"
+    pod: "{{ _pod.metadata.name }}"
+    container: "{{ validation_litellm_container }}"
+    command: >-
+      python3 -c 'import os, redis, urllib.request as u;
+      r = redis.Redis.from_url(os.environ["SOTA_BUDGET_REDIS_URL"], password=os.environ.get("SOTA_BUDGET_REDIS_PASSWORD"), socket_timeout=3);
+      print("PING", r.ping());
+      t = u.urlopen("http://127.0.0.1:{{ validate_platform_router_metrics_port }}/metrics", timeout=10).read().decode();
+      print("\n".join(l for l in t.splitlines() if l.startswith("router_sota_budget_limit_tokens")))'
+  loop: "{{ validate_platform_budget_pods.resources | default([]) | rejectattr('metadata.deletionTimestamp', 'defined') | list }}"
+  loop_control:
+    loop_var: _pod
+    label: "{{ _pod.metadata.name }}"
+  register: validate_platform_budget_exec
+  changed_when: false
+  failed_when: false
+  when: validation_ctx.sota_budget_tiers | default({}) | length > 0
+
+- name: Record P26 (SOTA budget per tier and its Redis)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _tiers: "{{ validation_ctx.sota_budget_tiers | default({}) }}"
+    _dep: "{{ (validate_platform_budget_redis.resources | default([])) | first | default({}) }}"
+    _ready: "{{ (_dep.status | default({})).readyReplicas | default(0) | int }}"
+    _execs: "{{ validate_platform_budget_exec.results | default([]) | rejectattr('skipped', 'defined') | list }}"
+    # Per pod: Redis answered, and every tier of SOTA_BUDGET_TIERS has its limit gauge.
+    _bad: >-
+      {%- set bad = [] -%}
+      {%- for e in _execs -%}
+      {%- set out = e.stdout | default('', true) | string -%}
+      {%- set missing = _tiers | dict2items | rejectattr('key', 'in', out) | map(attribute='key') | list -%}
+      {%- if 'PING True' not in out -%}
+      {%- set _ = bad.append(e._pod.metadata.name ~ ': no PING') -%}
+      {%- elif missing -%}
+      {%- set _ = bad.append(e._pod.metadata.name ~ ': no limit for ' ~ missing | join(',')) -%}
+      {%- endif -%}
+      {%- endfor -%}
+      {{ bad | to_json }}
+    _r:
+      group: platform
+      id: P26
+      name: SOTA budget per tier, its Redis reached by every LiteLLM pod
+      status: >-
+        {{ 'SKIP' if not _tiers else ('PASS' if _ready | int >= 1 and _execs | length > 0
+                                     and (_bad | from_json | length == 0) else 'FAIL') }}
+      detail: >-
+        {{ 'SOTA budget off (no SOTA_BUDGET_TIERS on LiteLLM)' if not _tiers else
+           'budgets ' ~ (_tiers | dict2items | map('join', '=') | join(', ')) ~ '; Redis '
+           ~ validate_platform_budget_redis_name ~ ' ' ~ (_ready | string) ~ ' ready replica(s); '
+           ~ (((_execs | length) ~ ' LiteLLM pod(s) reach Redis and export the budgets')
+              if (_bad | from_json | length == 0) else ('problems: ' ~ (_bad | from_json | join('; ')))) }}

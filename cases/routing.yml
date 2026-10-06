@@ -198,6 +198,37 @@ namespace_cases:
     requires: [namespace_scan]
     expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
 
+# SOTA budget per tier (router v0.12.0, gitops sotaBudget.enabled). The tier `validation` has a SOTA
+# budget of 1 token: after one SOTA answer of this tier, its requests stay LOCAL for the window
+# (5 minutes). B1 reads the budget (any destination: an earlier run may have used the budget); B2,
+# after the router counted the tokens of B1, must stay LOCAL by the budget. Uses about 1-2k SOTA
+# tokens of the tier validation: a disruptive group (validation_disruptive or --tags budget).
+budget_cases:
+  - id: B1
+    name: request of the tier validation reads its SOTA budget (1 token)
+    tier: validation
+    prompt: >-
+      Analyze the trade-offs between event sourcing and a classic CRUD model for an order management
+      system. Explain why each one fits or not, with a short example.
+    max_tokens: 60
+    requires: [sota_budget]
+    expect: {team: validation, decision: {sota_budget_limit: 1}}
+
+  - id: B2
+    name: after a SOTA answer the tier validation stays local by its SOTA budget (no 429)
+    tier: validation
+    wait_budget_counted: validation
+    prompt: >-
+      Analyze the trade-offs between event sourcing and a classic CRUD model for an order management
+      system. Explain why each one fits or not, with a short example.
+    max_tokens: 60
+    requires: [sota_budget]
+    expect:
+      routed_to: local-fast
+      decided_by: efficiency
+      team: validation
+      reason_contains: ["SOTA budget of tier validation used"]
+
 demo_cases:
   - id: D1
     name: European + Italy -> SOTA (NRP without an identifier)
