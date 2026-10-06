@@ -69,7 +69,7 @@
           print(sum(int(r.get("sota-budget:{{ validate_router_case.wait_budget_counted }}:%d" % k) or 0) for k in (i, i - 1)))'
       register: validate_router_budget_counted
       until: (validate_router_budget_counted.stdout | default('0') | trim | int) > 0
-      retries: 15
+      retries: 30
       delay: 2
       changed_when: false
       failed_when: false
@@ -77,96 +77,123 @@
         - validate_router_case.wait_budget_counted is defined
         - validate_router_budget_pods.resources | default([]) | length > 0
 
-    - name: "Note the start time of {{ validate_router_case.id }}"
+    # A previous case that should have used SOTA tokens (B1) may have been answered by the local
+    # model after a SOTA error (fallback): the router then rightly counts nothing, and this case
+    # cannot test the budget. That is a WARN (the external model failed), not a FAIL.
+    - name: "Check that SOTA tokens were counted before {{ validate_router_case.id }}"
       ansible.builtin.set_fact:
-        validate_router_t0: "{{ now(utc=true, fmt='%s') }}"
+        validate_router_not_counted: >-
+          {{ validate_router_case.wait_budget_counted is defined
+             and (validate_router_budget_counted.stdout | default('0') | trim | int) == 0 }}
 
-    # no_log: the request headers hold the API key.
-    - name: "Send {{ validate_router_case.id }}"
-      ansible.builtin.uri:
-        url: "{{ validation_ctx.url }}"
-        method: POST
-        headers: >-
-          {{ {'Content-Type': 'application/json'}
-             | combine({'Authorization': 'Bearer ' ~ _key} if _key | length > 0 else {})
-             | combine(validate_router_case.headers | default({})) }}
-        body_format: json
-        body: >-
-          {{ {'model': validate_router_model,
-              'max_tokens': validate_router_case.max_tokens | default(validate_router_max_tokens) | int,
-              'messages': [{'role': 'user', 'content': validate_router_case.prompt}]}
-             | combine({'tools': validate_router_case.tools} if validate_router_case.tools is defined else {})
-             | combine({'selfheal_namespaces': validate_router_case.hint} if validate_router_case.hint is defined else {}) }}
-        timeout: "{{ validate_router_timeout }}"
-        validate_certs: "{{ validation_validate_certs }}"
-        return_content: true
-      register: validate_router_resp
-      failed_when: false
-      no_log: true
-
-    - name: "Read the routing decision of {{ validate_router_case.id }}"
-      policy_decisions:
-        namespace: "{{ validation_router_namespace }}"
-        label_selector: "{{ validate_router_litellm_selector }}"
-        container: "{{ validate_router_litellm_container | default(omit, true) }}"
-        since_seconds: "{{ (now(utc=true, fmt='%s') | int) - (validate_router_t0 | int) + 2 }}"
-        exclude: "{{ validation_seen_decisions }}"
-        timeout: "{{ validate_router_decision_timeout }}"
-      register: validate_router_decision
-      failed_when: false
-      when: _want_status | int == 200
-
-    - name: "Record {{ validate_router_case.id }}"
+    - name: "Record a WARN, no SOTA tokens counted: {{ validate_router_case.id }}"
       ansible.builtin.set_fact:
-        validation_seen_decisions: "{{ validation_seen_decisions + (_decisions | map(attribute='_key') | list) }}"
         validation_results: "{{ validation_results + [_r] }}"
       vars:
-        _status: "{{ validate_router_resp.status | default(-1) | int }}"
-        _decisions: "{{ validate_router_decision.decisions | default([]) }}"
-        _d: "{{ validate_router_decision.decision | default({}) }}"
-        _reason: "{{ _d.reason | default('') }}"
-        # ner_reason_contains: labels of C1 (Presidio NER), checked only when C1 is on.
-        _reason_needles: >-
-          {{ _expect.reason_contains | default([])
-             + (_expect.ner_reason_contains | default([]) if validation_ctx.ner_enabled | bool else []) }}
-        _secs: "{{ '%.1f' | format(validate_router_resp.elapsed | default(0) | float) }}"
-        _message: "{{ (validate_router_resp.json | default({})).choices | default([{}]) | first | default({}) }}"
-        _content: "{{ (_message.message | default({})).content | default('', true) }}"
-        _tool_calls: >-
-          {{ (_message.message | default({})).tool_calls | default([], true)
-             | map(attribute='function') | map(attribute='name') | list }}
-        _route: >-
-          {{ ('routed_to=' ~ _d.routed_to | default('-') ~ ' by=' ~ _d.decided_by | default('-')
-              ~ ' team=' ~ _d.team | default('-')
-              ~ (' ns=' ~ _d.ns_restricted | join(',') ~ '/' ~ _d.ns_source if _d.ns_source is defined else '')
-              ~ ' | ' ~ _reason[:160]
-              ~ (' | trace ' ~ _d.trace_id if _d.trace_id is defined else ''))
-             if _d else 'no routing decision found in the LiteLLM logs' }}{{
-             ' (' ~ _decisions | length ~ ' new decisions: other traffic?)' if _decisions | length > 1 else '' }}
-        _error: >-
-          {{ ' ' ~ validate_router_resp.msg | default('') if _status | int == -1 else '' }}{{
-             ' | ' ~ validate_router_decision.msg if validate_router_decision.failed | default(false) else '' }}
-        _checks:
-          - "{{ _status == _want_status | int }}"
-          - "{{ _expect.routed_to is undefined or _d.routed_to | default('') == _expect.routed_to }}"
-          - "{{ _expect.decided_by is undefined or _d.decided_by | default('') == _expect.decided_by }}"
-          - "{{ _expect.decided_by_not is undefined or _d.decided_by | default('') != _expect.decided_by_not }}"
-          - "{{ _expect.ns_restricted is undefined or _d.ns_restricted | default([]) == _expect.ns_restricted }}"
-          - "{{ _expect.team is undefined or _d.team | default('') == _expect.team }}"
-          - >-
-            {{ (_expect.decision | default({})) | dict2items | rejectattr('key', 'in', _d) | list | length == 0
-               and ((_expect.decision | default({})) | dict2items | map(attribute='key') | map('extract', _d) | list)
-                   == ((_expect.decision | default({})) | dict2items | map(attribute='value') | list) }}
-          - "{{ _reason_needles | reject('in', _reason) | list | length == 0 }}"
-          - "{{ _expect.tool_call is undefined or _expect.tool_call in _tool_calls }}"
-          - "{{ _expect.content_excludes | default([]) | select('in', _content) | list | length == 0 }}"
-          - "{{ _want_status | int != 200 or _d | length > 0 }}"
-          - "{{ not validate_router_decision.failed | default(false) }}"
         _r:
           group: "{{ validate_router_group }}"
           id: "{{ validate_router_case.id }}"
           name: "{{ validate_router_case.name }}"
-          status: "{{ 'PASS' if _checks | reject | list | length == 0 else 'FAIL' }}"
+          status: WARN
           detail: >-
-            HTTP {{ _status }} {{ _secs }}s{{ ' ' ~ _route if _want_status | int == 200 else '' }}{{
-            ' | tool calls: ' ~ (_tool_calls | join(', ') or 'none') if _expect.tool_call is defined else '' }}{{ _error }}
+            not run: the router counted no SOTA tokens of tier {{ validate_router_case.wait_budget_counted | default('-') }}
+            after the previous case (its SOTA call was probably answered by the local model after a SOTA
+            error, see litellm_deployment_successful_fallbacks_total); run the group again
+      when: validate_router_not_counted | bool
+
+    - name: "Send and check {{ validate_router_case.id }}"
+      when: not (validate_router_not_counted | bool)
+      block:
+        - name: "Note the start time of {{ validate_router_case.id }}"
+          ansible.builtin.set_fact:
+            validate_router_t0: "{{ now(utc=true, fmt='%s') }}"
+
+        # no_log: the request headers hold the API key.
+        - name: "Send {{ validate_router_case.id }}"
+          ansible.builtin.uri:
+            url: "{{ validation_ctx.url }}"
+            method: POST
+            headers: >-
+              {{ {'Content-Type': 'application/json'}
+                 | combine({'Authorization': 'Bearer ' ~ _key} if _key | length > 0 else {})
+                 | combine(validate_router_case.headers | default({})) }}
+            body_format: json
+            body: >-
+              {{ {'model': validate_router_model,
+                  'max_tokens': validate_router_case.max_tokens | default(validate_router_max_tokens) | int,
+                  'messages': [{'role': 'user', 'content': validate_router_case.prompt}]}
+                 | combine({'tools': validate_router_case.tools} if validate_router_case.tools is defined else {})
+                 | combine({'selfheal_namespaces': validate_router_case.hint} if validate_router_case.hint is defined else {}) }}
+            timeout: "{{ validate_router_timeout }}"
+            validate_certs: "{{ validation_validate_certs }}"
+            return_content: true
+          register: validate_router_resp
+          failed_when: false
+          no_log: true
+
+        - name: "Read the routing decision of {{ validate_router_case.id }}"
+          policy_decisions:
+            namespace: "{{ validation_router_namespace }}"
+            label_selector: "{{ validate_router_litellm_selector }}"
+            container: "{{ validate_router_litellm_container | default(omit, true) }}"
+            since_seconds: "{{ (now(utc=true, fmt='%s') | int) - (validate_router_t0 | int) + 2 }}"
+            exclude: "{{ validation_seen_decisions }}"
+            timeout: "{{ validate_router_decision_timeout }}"
+          register: validate_router_decision
+          failed_when: false
+          when: _want_status | int == 200
+
+        - name: "Record {{ validate_router_case.id }}"
+          ansible.builtin.set_fact:
+            validation_seen_decisions: "{{ validation_seen_decisions + (_decisions | map(attribute='_key') | list) }}"
+            validation_results: "{{ validation_results + [_r] }}"
+          vars:
+            _status: "{{ validate_router_resp.status | default(-1) | int }}"
+            _decisions: "{{ validate_router_decision.decisions | default([]) }}"
+            _d: "{{ validate_router_decision.decision | default({}) }}"
+            _reason: "{{ _d.reason | default('') }}"
+            # ner_reason_contains: labels of C1 (Presidio NER), checked only when C1 is on.
+            _reason_needles: >-
+              {{ _expect.reason_contains | default([])
+                 + (_expect.ner_reason_contains | default([]) if validation_ctx.ner_enabled | bool else []) }}
+            _secs: "{{ '%.1f' | format(validate_router_resp.elapsed | default(0) | float) }}"
+            _message: "{{ (validate_router_resp.json | default({})).choices | default([{}]) | first | default({}) }}"
+            _content: "{{ (_message.message | default({})).content | default('', true) }}"
+            _tool_calls: >-
+              {{ (_message.message | default({})).tool_calls | default([], true)
+                 | map(attribute='function') | map(attribute='name') | list }}
+            _route: >-
+              {{ ('routed_to=' ~ _d.routed_to | default('-') ~ ' by=' ~ _d.decided_by | default('-')
+                  ~ ' team=' ~ _d.team | default('-')
+                  ~ (' ns=' ~ _d.ns_restricted | join(',') ~ '/' ~ _d.ns_source if _d.ns_source is defined else '')
+                  ~ ' | ' ~ _reason[:160]
+                  ~ (' | trace ' ~ _d.trace_id if _d.trace_id is defined else ''))
+                 if _d else 'no routing decision found in the LiteLLM logs' }}{{
+                 ' (' ~ _decisions | length ~ ' new decisions: other traffic?)' if _decisions | length > 1 else '' }}
+            _error: >-
+              {{ ' ' ~ validate_router_resp.msg | default('') if _status | int == -1 else '' }}{{
+                 ' | ' ~ validate_router_decision.msg if validate_router_decision.failed | default(false) else '' }}
+            _checks:
+              - "{{ _status == _want_status | int }}"
+              - "{{ _expect.routed_to is undefined or _d.routed_to | default('') == _expect.routed_to }}"
+              - "{{ _expect.decided_by is undefined or _d.decided_by | default('') == _expect.decided_by }}"
+              - "{{ _expect.decided_by_not is undefined or _d.decided_by | default('') != _expect.decided_by_not }}"
+              - "{{ _expect.ns_restricted is undefined or _d.ns_restricted | default([]) == _expect.ns_restricted }}"
+              - "{{ _expect.team is undefined or _d.team | default('') == _expect.team }}"
+              - >-
+                {{ (_expect.decision | default({})) | dict2items | rejectattr('key', 'in', _d) | list | length == 0
+                   and ((_expect.decision | default({})) | dict2items | map(attribute='key') | map('extract', _d) | list)
+                       == ((_expect.decision | default({})) | dict2items | map(attribute='value') | list) }}
+              - "{{ _reason_needles | reject('in', _reason) | list | length == 0 }}"
+              - "{{ _expect.tool_call is undefined or _expect.tool_call in _tool_calls }}"
+              - "{{ _expect.content_excludes | default([]) | select('in', _content) | list | length == 0 }}"
+              - "{{ _want_status | int != 200 or _d | length > 0 }}"
+              - "{{ not validate_router_decision.failed | default(false) }}"
+            _r:
+              group: "{{ validate_router_group }}"
+              id: "{{ validate_router_case.id }}"
+              name: "{{ validate_router_case.name }}"
+              status: "{{ 'PASS' if _checks | reject | list | length == 0 else 'FAIL' }}"
+              detail: >-
+                HTTP {{ _status }} {{ _secs }}s{{ ' ' ~ _route if _want_status | int == 200 else '' }}{{
+                ' | tool calls: ' ~ (_tool_calls | join(', ') or 'none') if _expect.tool_call is defined else '' }}{{ _error }}
