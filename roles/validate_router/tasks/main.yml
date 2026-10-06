@@ -7,13 +7,13 @@
       Router checks on {{ validation_ctx.url }} (SOTA {{ 'on' if validation_ctx.sota_enabled | bool else 'off: sota-smart
       is served by the local model' }}, classifier {{ validation_ctx.classifier_mode }},
       Presidio NER {{ 'on' if validation_ctx.ner_enabled | bool else 'off' }})
-  tags: [access, routing, namespace, demo]
+  tags: [access, routing, namespace, budget, demo]
 
 - name: Load the routing cases
   ansible.builtin.include_vars:
     file: "{{ validate_router_cases_file }}"
     name: validate_router_cases
-  tags: [routing, namespace, demo]
+  tags: [routing, namespace, budget, demo]
 
 - name: Access cases
   ansible.builtin.include_tasks:
@@ -53,6 +53,21 @@
   vars:
     validate_router_group: namespace
   tags: [namespace]
+
+# Disruptive: uses up the SOTA budget of the tier validation for its window (5 minutes).
+- name: SOTA budget cases (router v0.12.0; skipped when the budget is off)
+  ansible.builtin.include_tasks:
+    file: case.yml
+    apply:
+      tags: [budget]
+  loop: "{{ validate_router_cases.budget_cases }}"
+  loop_control:
+    loop_var: validate_router_case
+    label: "{{ validate_router_case.id }}"
+  vars:
+    validate_router_group: budget
+  when: validation_disruptive | bool or 'budget' in ansible_run_tags
+  tags: [budget]
 
 - name: Demo cases
   ansible.builtin.include_tasks:

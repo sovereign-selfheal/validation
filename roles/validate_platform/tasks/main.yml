@@ -27,6 +27,9 @@
 - name: Namespace policy and live page checks
   ansible.builtin.import_tasks: namespaces.yml
 
+- name: SOTA budget per tier checks
+  ansible.builtin.import_tasks: sota_budget.yml
+
 - name: Observability checks
   ansible.builtin.import_tasks: observability.yml
   when: validation_ctx.observability_enabled | bool

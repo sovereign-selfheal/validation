@@ -28,6 +28,10 @@ validation_litellm_container: litellm
 validation_key_secrets:
   research: apikey-research-1
   legal: apikey-legal-1
+# Optional keys: read when the Secret exists, never asserted. The tier `validation` (gitops, with a
+# SOTA budget of 1 token) is used by the budget checks B1 and B2 (router v0.12.0).
+validation_optional_key_secrets:
+  validation: apikey-validation-1
 
 # Values of the root Application used when a key is missing (defaults of gitops
 # bootstrap/values.yaml).

@@ -2,7 +2,11 @@
 # One case: send the request, read its routing decision, record the result.
 # Input: validate_router_case, validate_router_group.
 # `requires`: classifier (classifier.mode not off), namespace_scan / namespace_hint (that switch of
-# the namespace policy is on, router v0.11.0), namespace_policy (one of the two is on).
+# the namespace policy is on, router v0.11.0), namespace_policy (one of the two is on), sota_budget
+# (router v0.12.0: the tier `validation` has a SOTA budget and its key exists).
+# `wait_budget_counted: <tier>`: before the request, poll Redis (from a LiteLLM pod) until the router
+# counted SOTA tokens of that tier in the current window (it counts an answer after it ends).
+# `expect.decision`: fields of the decision that must be equal.
 - name: "Check the requirements of {{ validate_router_case.id }}"
   ansible.builtin.set_fact:
     validate_router_missing: >-
@@ -13,7 +17,9 @@
          + ([] if validation_ctx.namespace_scan_enabled | default(false) | bool else ['namespace_scan'])
          + ([] if validation_ctx.namespace_hint_enabled | default(false) | bool else ['namespace_hint'])
          + ([] if (validation_ctx.namespace_scan_enabled | default(false) | bool
-                   or validation_ctx.namespace_hint_enabled | default(false) | bool) else ['namespace_policy']) }}
+                   or validation_ctx.namespace_hint_enabled | default(false) | bool) else ['namespace_policy'])
+         + ([] if ('validation' in validation_ctx.sota_budget_tiers | default({})
+                   and 'validation' in validation_keys) else ['sota_budget']) }}
 
 - name: "Skip the case, a requirement is off: {{ validate_router_case.id }}"
   ansible.builtin.set_fact:
@@ -26,7 +32,9 @@
       status: SKIP
       detail: >-
         {{ validate_router_missing | map('regex_replace', '^classifier$', 'classifier.mode is off')
-           | map('regex_replace', '^namespace_(scan|hint|policy)$', 'namespace policy \1 is off') | join(', ') }}
+           | map('regex_replace', '^namespace_(scan|hint|policy)$', 'namespace policy \1 is off')
+           | map('regex_replace', '^sota_budget$', 'SOTA budget is off or the tier validation has none')
+           | join(', ') }}
   when: validate_router_missing | length > 0
 
 - name: "Run {{ validate_router_case.id }}"
@@ -38,6 +46,37 @@
       {{ validate_router_case.key if validate_router_case.key is defined
          else validation_keys[validate_router_case.tier | default('research')] }}
   block:
+    - name: "Read a LiteLLM pod for {{ validate_router_case.id }}"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ validation_router_namespace }}"
+        label_selectors: ["app=litellm"]
+        field_selectors: ["status.phase=Running"]
+      register: validate_router_budget_pods
+      when: validate_router_case.wait_budget_counted is defined
+
+    # Python: the LiteLLM image has redis-py and the Redis settings in its env.
+    - name: "Wait until the router counted the SOTA tokens of tier {{ validate_router_case.wait_budget_counted | default('-') }}"
+      kubernetes.core.k8s_exec:
+        namespace: "{{ validation_router_namespace }}"
+        pod: "{{ (validate_router_budget_pods.resources | first).metadata.name }}"
+        container: "{{ validation_litellm_container }}"
+        command: >-
+          python3 -c 'import os, time, redis;
+          w = int(os.environ.get("SOTA_BUDGET_WINDOW_S") or 300); i = int(time.time() // w);
+          r = redis.Redis.from_url(os.environ["SOTA_BUDGET_REDIS_URL"], password=os.environ.get("SOTA_BUDGET_REDIS_PASSWORD"), socket_timeout=3);
+          print(sum(int(r.get("sota-budget:{{ validate_router_case.wait_budget_counted }}:%d" % k) or 0) for k in (i, i - 1)))'
+      register: validate_router_budget_counted
+      until: (validate_router_budget_counted.stdout | default('0') | trim | int) > 0
+      retries: 15
+      delay: 2
+      changed_when: false
+      failed_when: false
+      when:
+        - validate_router_case.wait_budget_counted is defined
+        - validate_router_budget_pods.resources | default([]) | length > 0
+
     - name: "Note the start time of {{ validate_router_case.id }}"
       ansible.builtin.set_fact:
         validate_router_t0: "{{ now(utc=true, fmt='%s') }}"
@@ -114,6 +153,10 @@
           - "{{ _expect.decided_by_not is undefined or _d.decided_by | default('') != _expect.decided_by_not }}"
           - "{{ _expect.ns_restricted is undefined or _d.ns_restricted | default([]) == _expect.ns_restricted }}"
           - "{{ _expect.team is undefined or _d.team | default('') == _expect.team }}"
+          - >-
+            {{ (_expect.decision | default({})) | dict2items | rejectattr('key', 'in', _d) | list | length == 0
+               and ((_expect.decision | default({})) | dict2items | map(attribute='key') | map('extract', _d) | list)
+                   == ((_expect.decision | default({})) | dict2items | map(attribute='value') | list) }}
           - "{{ _reason_needles | reject('in', _reason) | list | length == 0 }}"
           - "{{ _expect.tool_call is undefined or _expect.tool_call in _tool_calls }}"
           - "{{ _expect.content_excludes | default([]) | select('in', _content) | list | length == 0 }}"

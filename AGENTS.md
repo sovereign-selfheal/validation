@@ -45,7 +45,7 @@ Every check exists **once**: in Ansible, or in `harness/load.py`, never in both.
   Keep the API keys out of the logs (`no_log: true` on tasks that carry them; environment
   variables for the harness, never command-line arguments).
 - **Unique ids.** Each check has a unique id: `P` platform, `I` isolation, `A` access, `R` routing,
-  `D` demo, `N` namespace policy, `S` sota, `C` parallel (concurrency), `L` legal, `K` context (agents' large
+  `D` demo, `N` namespace policy, `B` SOTA budget, `S` sota, `C` parallel (concurrency), `L` legal, `K` context (agents' large
   contexts), `F` failover, `H` self-heal;
   `X` is reserved for an aborted run.
 - **Numbers from `-e` are strings.** Compare an overridable number with `| int`
@@ -99,6 +99,11 @@ this repo in the same change set.
     `NAMESPACE_HINT_ENABLED` (read by `validate_context`), ServiceAccount `litellm`, router metrics
     `router_namespace_labels_loaded` and `router_namespace_labels` on port 9091 (P24); component
     `routing-live-view` in `maas-routing` with its oauth-proxy (P25).
+  - SOTA budget per tier (router v0.12.0): the LiteLLM env `SOTA_BUDGET_TIERS` (JSON, read by
+    `validate_context`), `SOTA_BUDGET_WINDOW_S`, `SOTA_BUDGET_REDIS_URL`/`_PASSWORD`, the Deployment
+    `litellm-redis`, the Redis keys `sota-budget:<tier>:<window>`, the metric
+    `router_sota_budget_limit_tokens` (P26), the tier `validation` with a budget of 1 token and its key
+    Secret `apikey-validation-1` (optional, B1-B2).
 - **`router` repo.** The format of the `[policy-router] {...}` log line (a Python dict repr with
   `routed_to`, `decided_by`, `reason`, `team`, `trace_id`). The parser is
   `roles/validate_router/module_utils/policy_router.py`; its tests are in `tests/`.
