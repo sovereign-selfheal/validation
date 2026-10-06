@@ -26,7 +26,7 @@
       status: SKIP
       detail: >-
         {{ validate_router_missing | map('regex_replace', '^classifier$', 'classifier.mode is off')
-           | map('regex_replace', '^namespace_(scan|hint|policy)$', 'namespace policy \\1 is off') | join(', ') }}
+           | map('regex_replace', '^namespace_(scan|hint|policy)$', 'namespace policy \1 is off') | join(', ') }}
   when: validate_router_missing | length > 0
 
 - name: "Run {{ validate_router_case.id }}"
