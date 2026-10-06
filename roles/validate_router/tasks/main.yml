@@ -7,13 +7,13 @@
       Router checks on {{ validation_ctx.url }} (SOTA {{ 'on' if validation_ctx.sota_enabled | bool else 'off: sota-smart
       is served by the local model' }}, classifier {{ validation_ctx.classifier_mode }},
       Presidio NER {{ 'on' if validation_ctx.ner_enabled | bool else 'off' }})
-  tags: [access, routing, demo]
+  tags: [access, routing, namespace, demo]
 
 - name: Load the routing cases
   ansible.builtin.include_vars:
     file: "{{ validate_router_cases_file }}"
     name: validate_router_cases
-  tags: [routing, demo]
+  tags: [routing, namespace, demo]
 
 - name: Access cases
   ansible.builtin.include_tasks:
@@ -40,6 +40,19 @@
   vars:
     validate_router_group: routing
   tags: [routing]
+
+- name: Namespace policy cases (router v0.11.0; skipped when the policy is off)
+  ansible.builtin.include_tasks:
+    file: case.yml
+    apply:
+      tags: [namespace]
+  loop: "{{ validate_router_cases.namespace_cases }}"
+  loop_control:
+    loop_var: validate_router_case
+    label: "{{ validate_router_case.id }}"
+  vars:
+    validate_router_group: namespace
+  tags: [namespace]
 
 - name: Demo cases
   ansible.builtin.include_tasks:

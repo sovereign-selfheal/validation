@@ -83,6 +83,10 @@
       team_access_enabled: "{{ validation_team_group_info.resources | length > 0 }}"
       # Same rule as the router: unset or empty = the policy (on); 1, true, yes, on = on.
       ner_enabled: "{{ _ner_env in ['', '1', 'true', 'yes', 'on'] }}"
+      # Namespace policy (router v0.11.0): the policy keys are off in chain.yaml, the gitops repo
+      # turns them on with these env vars (namespacePolicy.scan/hint of the root Application).
+      namespace_scan_enabled: "{{ _ns_scan_env in ['1', 'true', 'yes', 'on'] }}"
+      namespace_hint_enabled: "{{ _ns_hint_env in ['1', 'true', 'yes', 'on'] }}"
     validation_results: []
     validation_seen_decisions: []
   vars:
@@ -91,6 +95,12 @@
           | selectattr('name', 'eq', validation_litellm_container) | first | default({})).env | default([]) }}
     _ner_env: >-
       {{ _litellm_env | selectattr('name', 'eq', 'NER_ENABLED') | map(attribute='value', default='')
+         | first | default('') | string | trim | lower }}
+    _ns_scan_env: >-
+      {{ _litellm_env | selectattr('name', 'eq', 'NAMESPACE_SCAN_ENABLED') | map(attribute='value', default='')
+         | first | default('') | string | trim | lower }}
+    _ns_hint_env: >-
+      {{ _litellm_env | selectattr('name', 'eq', 'NAMESPACE_HINT_ENABLED') | map(attribute='value', default='')
          | first | default('') | string | trim | lower }}
     _infra: "{{ validation_infrastructure.resources[0] | default({}) }}"
     _domain: "{{ validation_ingress_config.resources[0].spec.domain }}"

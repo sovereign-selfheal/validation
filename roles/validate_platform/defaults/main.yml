@@ -76,3 +76,16 @@ validate_platform_uiplugins: [distributed-tracing, monitoring]
 # Team access (ansible repo, roles/team_access and roles/argocd_seed).
 validate_platform_team_cluster_role: cluster-admin
 validate_platform_argocd_name: openshift-gitops
+
+# Namespace policy of the router (router v0.11.0; ansible repo, roles/argocd_seed; P24, P25).
+validate_platform_data_class_label: sovereign-selfheal.io/data-class
+validate_platform_data_class_expected:
+  agentic-triage: public
+  payments: restricted
+validate_platform_namespace_reader_role: sovereign-selfheal-namespace-reader
+validate_platform_namespace_reader_bindings:
+  litellm-namespace-reader: litellm
+  routing-live-view-namespace-reader: routing-live-view
+validate_platform_router_metrics_port: 9091
+# Live page of the routing decisions (gitops component routing-live-view, in the router namespace).
+validate_platform_live_view_name: routing-live-view

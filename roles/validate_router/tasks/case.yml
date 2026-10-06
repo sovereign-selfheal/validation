@@ -1,7 +1,21 @@
 ---
 # One case: send the request, read its routing decision, record the result.
 # Input: validate_router_case, validate_router_group.
-- name: "Skip the case, it needs the classifier: {{ validate_router_case.id }}"
+# `requires`: classifier (classifier.mode not off), namespace_scan / namespace_hint (that switch of
+# the namespace policy is on, router v0.11.0), namespace_policy (one of the two is on).
+- name: "Check the requirements of {{ validate_router_case.id }}"
+  ansible.builtin.set_fact:
+    validate_router_missing: >-
+      {{ (validate_router_case.requires | default([])) | select('in', _off) | list }}
+  vars:
+    _off: >-
+      {{ (['classifier'] if validation_ctx.classifier_mode == 'off' else [])
+         + ([] if validation_ctx.namespace_scan_enabled | default(false) | bool else ['namespace_scan'])
+         + ([] if validation_ctx.namespace_hint_enabled | default(false) | bool else ['namespace_hint'])
+         + ([] if (validation_ctx.namespace_scan_enabled | default(false) | bool
+                   or validation_ctx.namespace_hint_enabled | default(false) | bool) else ['namespace_policy']) }}
+
+- name: "Skip the case, a requirement is off: {{ validate_router_case.id }}"
   ansible.builtin.set_fact:
     validation_results: "{{ validation_results + [_r] }}"
   vars:
@@ -10,15 +24,13 @@
       id: "{{ validate_router_case.id }}"
       name: "{{ validate_router_case.name }}"
       status: SKIP
-      detail: classifier.mode is off
-  when:
-    - "'classifier' in validate_router_case.requires | default([])"
-    - validation_ctx.classifier_mode == 'off'
+      detail: >-
+        {{ validate_router_missing | map('regex_replace', '^classifier$', 'classifier.mode is off')
+           | map('regex_replace', '^namespace_(scan|hint|policy)$', 'namespace policy \1 is off') | join(', ') }}
+  when: validate_router_missing | length > 0
 
 - name: "Run {{ validate_router_case.id }}"
-  when: >-
-    'classifier' not in validate_router_case.requires | default([])
-    or validation_ctx.classifier_mode != 'off'
+  when: validate_router_missing | length == 0
   vars:
     _expect: "{{ validate_router_case.expect }}"
     _want_status: "{{ _expect.status | default(200) | int }}"
@@ -44,7 +56,8 @@
           {{ {'model': validate_router_model,
               'max_tokens': validate_router_case.max_tokens | default(validate_router_max_tokens) | int,
               'messages': [{'role': 'user', 'content': validate_router_case.prompt}]}
-             | combine({'tools': validate_router_case.tools} if validate_router_case.tools is defined else {}) }}
+             | combine({'tools': validate_router_case.tools} if validate_router_case.tools is defined else {})
+             | combine({'selfheal_namespaces': validate_router_case.hint} if validate_router_case.hint is defined else {}) }}
         timeout: "{{ validate_router_timeout }}"
         validate_certs: "{{ validation_validate_certs }}"
         return_content: true
@@ -85,7 +98,9 @@
              | map(attribute='function') | map(attribute='name') | list }}
         _route: >-
           {{ ('routed_to=' ~ _d.routed_to | default('-') ~ ' by=' ~ _d.decided_by | default('-')
-              ~ ' team=' ~ _d.team | default('-') ~ ' | ' ~ _reason[:160]
+              ~ ' team=' ~ _d.team | default('-')
+              ~ (' ns=' ~ _d.ns_restricted | join(',') ~ '/' ~ _d.ns_source if _d.ns_source is defined else '')
+              ~ ' | ' ~ _reason[:160]
               ~ (' | trace ' ~ _d.trace_id if _d.trace_id is defined else ''))
              if _d else 'no routing decision found in the LiteLLM logs' }}{{
              ' (' ~ _decisions | length ~ ' new decisions: other traffic?)' if _decisions | length > 1 else '' }}
@@ -96,6 +111,8 @@
           - "{{ _status == _want_status | int }}"
           - "{{ _expect.routed_to is undefined or _d.routed_to | default('') == _expect.routed_to }}"
           - "{{ _expect.decided_by is undefined or _d.decided_by | default('') == _expect.decided_by }}"
+          - "{{ _expect.decided_by_not is undefined or _d.decided_by | default('') != _expect.decided_by_not }}"
+          - "{{ _expect.ns_restricted is undefined or _d.ns_restricted | default([]) == _expect.ns_restricted }}"
           - "{{ _expect.team is undefined or _d.team | default('') == _expect.team }}"
           - "{{ _reason_needles | reject('in', _reason) | list | length == 0 }}"
           - "{{ _expect.tool_call is undefined or _expect.tool_call in _tool_calls }}"
