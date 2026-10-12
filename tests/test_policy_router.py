@@ -101,8 +101,13 @@ def test_read_decisions_merges_pods_by_time_and_decodes_utf8():
     assert [d["_pod"] for d in got] == ["litellm-2", "litellm-1"]
 
 
+
 def _without_trace(decision):
     return {k: v for k, v in decision.items() if k != "trace_id"}
+
+
+# The fail-closed decision of the router has no trace id, even with tracing on.
+FAIL_CLOSED = {"policy": "chain", "routed_to": "local-fast", "reason": "chain: fail-closed on error (x) -> LOCAL"}
 
 
 def test_new_traceparent_is_w3c_and_sampled():
@@ -116,12 +121,24 @@ def test_new_traceparent_is_w3c_and_sampled():
     assert new_traceparent()[1] != trace_id
 
 
+def test_lookup_plugin_builds_the_same_header():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[1] / "roles/validate_router/lookup_plugins/validate_router_traceparent.py"
+    spec = importlib.util.spec_from_file_location("validate_router_traceparent", path)
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    [got] = plugin.LookupModule().run([])
+    assert got["header"].split("-")[1] == got["trace_id"] and got["header"].endswith("-01")
+
+
 def test_pick_decision_by_trace_among_other_traffic():
     from policy_router import pick_decision
 
     agent = dict(DECISION, trace_id="aaa", team="agents", routed_to="sota-smart")
     mine = dict(DECISION, trace_id="bbb")
     later = dict(DECISION, trace_id="ccc", team="agents")
+    assert pick_decision([agent, mine, later], "bbb", strict=True) == (mine, "trace")
     assert pick_decision([agent, mine, later], "bbb") == (mine, "trace")
 
 
@@ -130,23 +147,28 @@ def test_pick_decision_takes_the_newest_of_the_same_trace():
 
     first = dict(DECISION, trace_id="bbb", routed_to="sota-smart")
     retry = dict(DECISION, trace_id="bbb")
-    assert pick_decision([first, retry], "bbb") == (retry, "trace")
+    assert pick_decision([first, retry], "bbb", strict=True) == (retry, "trace")
 
 
-def test_pick_decision_never_takes_another_trace():
+def test_strict_never_takes_another_decision():
     from policy_router import pick_decision
 
     agent = dict(DECISION, trace_id="aaa", team="agents")
-    assert pick_decision([agent], "bbb") == ({}, "none")
+    assert pick_decision([agent], "bbb", strict=True) == ({}, "none")
+    # A fail-closed decision of another client has no trace id: still not ours.
+    assert pick_decision([FAIL_CLOSED], "bbb", strict=True) == ({}, "none")
+    assert pick_decision([agent, FAIL_CLOSED], "bbb", strict=True) == ({}, "none")
+    assert pick_decision([], "bbb", strict=True) == ({}, "none")
 
 
-def test_pick_decision_without_tracing_takes_the_newest():
+def test_not_strict_takes_the_newest():
     from policy_router import pick_decision
 
     old, new = _without_trace(DECISION), dict(_without_trace(DECISION), routed_to="sota-smart")
     assert pick_decision([old, new], "bbb") == (new, "newest")
     assert pick_decision([old, new]) == (new, "newest")
-    assert pick_decision([], "bbb") == ({}, "newest")
+    assert pick_decision([dict(DECISION, trace_id="aaa"), FAIL_CLOSED], "bbb") == (FAIL_CLOSED, "newest")
+    assert pick_decision([], "bbb") == ({}, "none")
 
 
 def test_wait_returns_when_the_trace_appears(monkeypatch):
@@ -154,14 +176,15 @@ def test_wait_returns_when_the_trace_appears(monkeypatch):
 
     agent = dict(DECISION, trace_id="aaa", team="agents")
     mine = dict(DECISION, trace_id="bbb")
-    reads = iter([[agent], [agent], [agent, mine]])
+    reads = iter([[agent], [agent, FAIL_CLOSED], [agent, FAIL_CLOSED, mine]])
     monkeypatch.setattr(policy_router, "read_decisions", lambda *a, **k: [dict(d) for d in next(reads)])
     monkeypatch.setattr(policy_router.time, "sleep", lambda s: None)
-    new = policy_router.wait_new_decisions(None, "ns", "app=litellm", 5, timeout=60, trace_id="bbb")
-    assert [d["trace_id"] for d in new] == ["aaa", "bbb"]
+    new, decision, matched_by = policy_router.wait_decision(None, "ns", "app=litellm", 5, timeout=60,
+                                                            trace_id="bbb", strict=True)
+    assert len(new) == 3 and decision["trace_id"] == "bbb" and matched_by == "trace"
 
 
-def test_wait_without_tracing_returns_at_the_first_decision(monkeypatch):
+def test_wait_not_strict_returns_at_the_first_decision(monkeypatch):
     import policy_router
 
     calls = []
@@ -171,16 +194,20 @@ def test_wait_without_tracing_returns_at_the_first_decision(monkeypatch):
         return [_without_trace(DECISION)]
 
     monkeypatch.setattr(policy_router, "read_decisions", read)
-    new = policy_router.wait_new_decisions(None, "ns", "app=litellm", 5, timeout=60, trace_id="bbb")
-    assert len(new) == 1 and len(calls) == 1
+    new, decision, matched_by = policy_router.wait_decision(None, "ns", "app=litellm", 5, timeout=60,
+                                                            trace_id="bbb")
+    assert matched_by == "newest" and len(new) == 1 and len(calls) == 1
 
 
-def test_wait_for_a_missing_trace_stops_at_the_timeout(monkeypatch):
+def test_wait_strict_for_a_missing_trace_stops_at_the_timeout(monkeypatch):
+    import types
+
     import policy_router
 
     clock = iter(range(0, 100, 4))
-    monkeypatch.setattr(policy_router, "read_decisions", lambda *a, **k: [dict(DECISION, trace_id="aaa")])
-    monkeypatch.setattr(policy_router.time, "monotonic", lambda: next(clock))
-    monkeypatch.setattr(policy_router.time, "sleep", lambda s: None)
-    new = policy_router.wait_new_decisions(None, "ns", "app=litellm", 5, timeout=10, trace_id="bbb")
-    assert policy_router.pick_decision(new, "bbb") == ({}, "none")
+    fake_time = types.SimpleNamespace(monotonic=lambda: next(clock), sleep=lambda s: None)
+    monkeypatch.setattr(policy_router, "time", fake_time)
+    monkeypatch.setattr(policy_router, "read_decisions", lambda *a, **k: [dict(FAIL_CLOSED)])
+    new, decision, matched_by = policy_router.wait_decision(None, "ns", "app=litellm", 5, timeout=10,
+                                                            trace_id="bbb", strict=True)
+    assert (decision, matched_by) == ({}, "none") and len(new) == 1

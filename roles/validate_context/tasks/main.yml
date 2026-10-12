@@ -104,6 +104,9 @@
       sota_budget_tiers: "{{ _budget_env | from_json if _budget_env is match('^\\s*\\{') else {} }}"
     validation_results: []
     validation_seen_decisions: []
+    # strict: each check uses only the decision with its own trace id (validate_router R0 can turn
+    # it to newest when the router does not log the trace id).
+    validation_trace_match: "{{ 'strict' if _values.observability.enabled | bool else 'newest' }}"
   vars:
     _litellm_env: >-
       {{ (((validation_litellm_info.resources | first | default({})).spec.template.spec.containers | default([]))

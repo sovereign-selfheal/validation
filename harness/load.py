@@ -37,7 +37,7 @@ import requests
 import urllib3
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roles/validate_router/module_utils"))
-from policy_router import decision_key, load_core_v1, new_traceparent, pick_decision, wait_new_decisions  # noqa: E402
+from policy_router import decision_key, load_core_v1, new_traceparent, wait_decision  # noqa: E402
 
 LONG = ("Analyze in depth how a relational database executes a query: parsing, planning, cost-based "
         "optimization, join algorithms and indexes. Explain why each step matters, compare the join "
@@ -120,6 +120,7 @@ class Suite:
         self.verify = not args.insecure
         self.core = load_core_v1()
         self.seen = set()
+        self.strict = args.trace_match == "strict"
         self.results = []
 
     # ------------------------------------------------------------------ helpers
@@ -145,11 +146,11 @@ class Suite:
         traceparent, trace_id = new_traceparent()
         start = time.time()
         r, secs = self.chat(prompt, traceparent=traceparent, **kw)
-        new = wait_new_decisions(self.core, self.args.namespace, self.args.litellm_selector,
-                                 time.time() - start + 2, exclude=self.seen, container=self.args.container,
-                                 trace_id=trace_id)
+        new, decision, _ = wait_decision(self.core, self.args.namespace, self.args.litellm_selector,
+                                         time.time() - start + 2, exclude=self.seen, container=self.args.container,
+                                         trace_id=trace_id, strict=self.strict)
         self.seen.update(decision_key(d) for d in new)
-        return r, secs, pick_decision(new, trace_id)[0]
+        return r, secs, decision
 
     @staticmethod
     def usage(r):
@@ -185,10 +186,11 @@ class Suite:
                         prompt_tokens = usage.get("prompt_tokens")
             status = r.status_code
         total = time.time() - start
-        new = wait_new_decisions(self.core, self.args.namespace, self.args.litellm_selector, total + 2,
-                                 exclude=self.seen, container=self.args.container, trace_id=trace_id)
+        new, decision, _ = wait_decision(self.core, self.args.namespace, self.args.litellm_selector, total + 2,
+                                         exclude=self.seen, container=self.args.container, trace_id=trace_id,
+                                         strict=self.strict)
         self.seen.update(decision_key(d) for d in new)
-        return status, first, total, prompt_tokens, pick_decision(new, trace_id)[0]
+        return status, first, total, prompt_tokens, decision
 
     # ------------------------------------------------------------------ groups
     def sota(self):
@@ -363,6 +365,9 @@ def main():
     parser.add_argument("--container", default="litellm", help="LiteLLM container name")
     parser.add_argument("--failover-seconds", type=int, default=75)
     parser.add_argument("--insecure", action="store_true", help="do not verify the router certificate")
+    parser.add_argument("--trace-match", choices=["strict", "newest"], default="strict",
+                        help="strict: use only the decision with the trace id of the request (check R0); "
+                             "newest: the newest new decision (tracing off)")
     args = parser.parse_args()
     if args.insecure:
         urllib3.disable_warnings()

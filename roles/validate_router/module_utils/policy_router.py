@@ -10,8 +10,11 @@ Used by the module ``policy_decisions`` and by ``harness/load.py``.
 
 Other clients (for example the triage agent, run by real alerts) can send requests at the same
 time. Each check therefore sends its own W3C ``traceparent`` header: the router keeps that trace
-id in ``trace_id``, so the check finds its own decision among the others. Without tracing on the
-cluster the decisions have no ``trace_id``; then the newest new decision is used.
+id in ``trace_id``, so the check finds its own decision among the others (``strict`` mode). The
+caller chooses the mode; it never comes from the log content, because some decisions have no
+``trace_id`` even with tracing on (the fail-closed decision). Without tracing on the cluster, or
+when the router does not keep the trace id, the caller turns ``strict`` off and the newest new
+decision is used.
 """
 
 import ast
@@ -81,38 +84,37 @@ def read_decisions(core_v1, namespace, label_selector, since_seconds, container=
 def new_traceparent():
     """A new W3C ``traceparent`` header value and its trace id: ``(header, trace_id)``.
 
-    The sampled flag (``01``) is set: with a parent-based sampler an unsampled parent gives no
-    span, so the router would log no ``trace_id``.
+    The router logs the trace id of the parent span, sampled or not. The sampled flag (``01``) is
+    set so that the spans of the validation requests reach Tempo too.
     """
     trace_id = secrets.token_hex(16)
     return f"00-{trace_id}-{secrets.token_hex(8)}-01", trace_id
 
 
-def pick_decision(new, trace_id=None):
+def pick_decision(new, trace_id=None, strict=False):
     """The decision of one request among the new decisions: ``(decision, matched_by)``.
 
     ``matched_by`` is ``trace`` (the newest decision with ``trace_id``; a retry can log the same
-    id twice), ``newest`` (no ``trace_id`` given, or no decision has one: tracing is off) or
-    ``none`` (other decisions have a trace id, but not this one: the decision of the request
-    was not found; never use the decision of another request).
+    id twice), ``newest`` (not ``strict``: the newest new decision, maybe of another request) or
+    ``none`` (no decision; with ``strict`` the decision of another request is never used).
     """
     if trace_id:
         mine = [d for d in new if d.get("trace_id") == trace_id]
         if mine:
             return mine[-1], "trace"
-        if any(d.get("trace_id") for d in new):
-            return {}, "none"
-    return (new[-1] if new else {}), "newest"
+    if new and not (strict and trace_id):
+        return new[-1], "newest"
+    return {}, "none"
 
 
-def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclude=(), timeout=10.0,
-                       interval=1.0, container=None, trace_id=None):
-    """Poll the logs until a new decision (not in ``exclude``) appears, or the timeout.
+def wait_decision(core_v1, namespace, label_selector, since_seconds, exclude=(), timeout=10.0,
+                  interval=1.0, container=None, trace_id=None, strict=False):
+    """Poll the logs until the decision of the request is found (see ``pick_decision``), or the
+    timeout. Decisions with a key in ``exclude`` are not new.
 
-    With ``trace_id``, poll until the decision with that trace id appears; stop early only when
-    the new decisions have no trace id at all (tracing is off, see ``pick_decision``).
     The kubelet serves a log line a little after the process writes it, so one read right
-    after the HTTP answer can miss it. Returns the new decisions, oldest first.
+    after the HTTP answer can miss it. Returns ``(new, decision, matched_by)``: the new
+    decisions (oldest first) and the pick.
     """
     excluded = set(exclude)
     start = time.monotonic()
@@ -120,10 +122,9 @@ def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclud
         elapsed = time.monotonic() - start
         new = [d for d in read_decisions(core_v1, namespace, label_selector, since_seconds + elapsed, container)
                if decision_key(d) not in excluded]
-        if new and pick_decision(new, trace_id)[1] != "none":
-            return new
-        if elapsed >= timeout:
-            return new
+        decision, matched_by = pick_decision(new, trace_id, strict)
+        if matched_by != "none" or elapsed >= timeout:
+            return new, decision, matched_by
         time.sleep(interval)
 
 

@@ -55,7 +55,8 @@
               '--litellm-selector', validate_load_litellm_selector,
               '--presidio-selector', validate_load_presidio_selector,
               '--container', validate_load_litellm_container,
-              '--failover-seconds', validate_load_failover_seconds | string]
+              '--failover-seconds', validate_load_failover_seconds | string,
+              '--trace-match', validation_trace_match]
              + ([] if validation_validate_certs | bool else ['--insecure']) }}
         chdir: "{{ playbook_dir }}/.."
       environment:
