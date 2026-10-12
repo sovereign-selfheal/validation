@@ -29,7 +29,7 @@ of the tiers (from the Secrets that ESO creates).
 | `platform` | P1-P26: operators (CSV `Succeeded`, `Manual` approval, pending InstallPlans), GPU node and ClusterPolicy, load balancer and Route timeouts, inference Gateway and its HPA, Kuadrant wasm module on every gateway pod (P18), Kuadrant metrics with the `tier` label (P20), Prometheus retention and volumes (P21), Argo CD Applications, HA replicas and PDBs, Authorino, local model and its hardware profile (P19), a name for each serving runtime in the RHOAI dashboard (P23), ESO, observability, team access (P17, only when the Group `selfheal-team` exists), decision model: Ready, on its GPU pool, `/v1/systemone` answers (P22, only with `decisionModel.enabled`), namespace policy: data-class labels, namespace reader RBAC, labels read by every LiteLLM pod when the policy is on (P24), live page `routing-live-view` behind the OpenShift sign-in (P25, SKIP when not deployed), SOTA budget per tier: the Redis of the counters is ready and every LiteLLM pod reaches it and exports the budget of every tier (P26, router v0.12.0, SKIP when off) | yes |
 | `isolation` | I0-I5: a probe pod in a temporary namespace cannot reach LiteLLM, Presidio or the local model; Presidio has no egress (IP and DNS) | yes |
 | `access` | A1-A3: no key and invalid key get 401; the tier comes from the key, not from the `x-team` header | yes |
-| `routing` | R1-R8: short, complex, Italian, PII, implicit sensitivity (lexicon and C2 classifier), prompt injection, agent tool call | yes |
+| `routing` | R0: the router logs the trace id of a request, so each check finds its own decision (see *Other traffic* below). R1-R8: short, complex, Italian, PII, implicit sensitivity (lexicon and C2 classifier), prompt injection, agent tool call | yes |
 | `namespace` | N1-N8: namespace policy of router v0.11.0: a restricted namespace from the agent hint or from the text stays local before the gates; public, unknown or no namespace keep the normal routing. N7 and N8 need router v0.11.1: PromQL in JSON tool call arguments (escaped quotes) and a regex matcher with two namespaces. A case is SKIP when its switch (`namespacePolicy.scan`/`hint`) is off | yes |
 | `demo` | D1-D8: the prompts of the demo video (router v0.4.0 or later) | yes |
 | `sota` | S1-S3: long SOTA answer, reasoning on per request, streaming with usage | no |
@@ -58,8 +58,19 @@ Things to know:
   (`NER_ENABLED=0` in the LiteLLM Deployment, router v0.10.0). The validation reads that
   variable: when C1 is off, the Presidio labels of D1, D2, D4 and D6 (`ner_reason_contains`) are
   not checked; their routing decisions are.
-- **One run at a time.** The routing decision is read from the `[policy-router]` log lines of
-  LiteLLM. Other traffic during a run can make a routing case ambiguous (the detail says so).
+- **Other traffic.** The routing decision is read from the `[policy-router]` log lines of
+  LiteLLM. Each request of a check sends its own W3C `traceparent` header, and the router logs
+  that trace id. So the check uses only its own decision, even while other clients send
+  requests (for example the triage agent, run by real alerts on a fresh cluster). R0 checks this
+  with one request before the other checks that read a decision:
+  - PASS: strict matching. A case without its decision fails with
+    `trace <id> not found among N new decisions` (and the decisions without a trace id, such as a
+    fail-closed decision of the router).
+  - WARN: the router did not log the trace id. The run uses the newest new decision instead.
+  - SKIP: tracing is off (`observability.enabled: false`), same fallback as WARN.
+
+  With the fallback, other traffic can make a case ambiguous (the detail says `other traffic?`).
+  Run one validation at a time.
 - **Changes.** `platform`, `access`, `routing` and `demo` are read-only (changed=0).
   `isolation` creates and deletes the namespace `validation-probe`. `failover` and `selfheal`
   report their changes.

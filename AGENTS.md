@@ -92,6 +92,10 @@ this repo in the same change set.
     `dgemma-decision-gpu`, node label `node-role.kubernetes.io/gpu-decision`, decision server in
     `kserve-container` on port 8080 (`/v1/systemone`), the KServe stop annotation
     `serving.kserve.io/stop` (P22, F2, F3).
+  - Tracing of LiteLLM (`components/litellm-router`, only with `observability.enabled`): the `otel`
+    callback and the env vars `OTEL_EXPORTER`, `OTEL_ENDPOINT`, `USE_OTEL_LITELLM_REQUEST_SPAN`.
+    The router logs the trace id of the request only when LiteLLM continues the incoming
+    `traceparent`; R0 checks it.
   - Root Application values read by `validate_context`: `modelProfile`, `sota.enabled`,
     `classifier.mode`, `observability.enabled`, `secretStore.enabled`, `decisionModel.enabled`.
   - Tiers: the legal budget (20,000 tokens / 5 minutes) drives L1.
@@ -107,6 +111,12 @@ this repo in the same change set.
 - **`router` repo.** The format of the `[policy-router] {...}` log line (a Python dict repr with
   `routed_to`, `decided_by`, `reason`, `team`, `trace_id`). The parser is
   `roles/validate_router/module_utils/policy_router.py`; its tests are in `tests/`.
+  The `trace_id` of a decision is the trace id of the W3C `traceparent` header of the request (the
+  Gateway and LiteLLM keep it): every check that reads a decision sends its own trace id and, in
+  strict mode, uses only the decision with that id. R0 (`validate_router/tasks/trace_check.yml`)
+  sets the mode for the run: strict when the router logs the trace id, newest decision when it does
+  not or when tracing is off. The mode never comes from the content of the logs: the fail-closed
+  decision has no `trace_id` even with tracing on.
   D1-D8 need router v0.4.0 or later (`(no id)`, `(<2 words)` markers). F2 needs router v0.7.0
   (the C2 signal label `fallback/llm@<conf>` of the systemone backend).
 - **`ansible` repo.** Operator packages (`validate_platform_operators`), Route `maas-router` and

@@ -104,9 +104,12 @@
     - name: "Send and check {{ validate_router_case.id }}"
       when: not (validate_router_not_counted | bool)
       block:
-        - name: "Note the start time of {{ validate_router_case.id }}"
+        # The trace id finds the decision of this request among the decisions of other clients
+        # (the triage agent runs on real alerts): the router logs the trace id of `traceparent`.
+        - name: "Note the start time and the trace of {{ validate_router_case.id }}"
           ansible.builtin.set_fact:
             validate_router_t0: "{{ now(utc=true, fmt='%s') }}"
+            validate_router_trace: "{{ lookup('validate_router_traceparent') }}"
 
         # no_log: the request headers hold the API key.
         - name: "Send {{ validate_router_case.id }}"
@@ -114,7 +117,7 @@
             url: "{{ validation_ctx.url }}"
             method: POST
             headers: >-
-              {{ {'Content-Type': 'application/json'}
+              {{ {'Content-Type': 'application/json', 'traceparent': validate_router_trace.header}
                  | combine({'Authorization': 'Bearer ' ~ _key} if _key | length > 0 else {})
                  | combine(validate_router_case.headers | default({})) }}
             body_format: json
@@ -138,6 +141,8 @@
             container: "{{ validate_router_litellm_container | default(omit, true) }}"
             since_seconds: "{{ (now(utc=true, fmt='%s') | int) - (validate_router_t0 | int) + 2 }}"
             exclude: "{{ validation_seen_decisions }}"
+            trace_id: "{{ validate_router_trace.trace_id }}"
+            strict: "{{ validation_trace_match == 'strict' }}"
             timeout: "{{ validate_router_decision_timeout }}"
           register: validate_router_decision
           failed_when: false
@@ -151,6 +156,11 @@
             _status: "{{ validate_router_resp.status | default(-1) | int }}"
             _decisions: "{{ validate_router_decision.decisions | default([]) }}"
             _d: "{{ validate_router_decision.decision | default({}) }}"
+            _matched_by: "{{ validate_router_decision.matched_by | default('none') }}"
+            # A fail-closed decision has no trace id: show it when the case found no decision.
+            _untraced: >-
+              {{ _decisions | rejectattr('trace_id', 'defined') | map(attribute='reason', default='')
+                 | map('truncate', 120) | list }}
             _reason: "{{ _d.reason | default('') }}"
             # ner_reason_contains: labels of C1 (Presidio NER), checked only when C1 is on.
             _reason_needles: >-
@@ -169,7 +179,11 @@
                   ~ ' | ' ~ _reason[:160]
                   ~ (' | trace ' ~ _d.trace_id if _d.trace_id is defined else ''))
                  if _d else 'no routing decision found in the LiteLLM logs' }}{{
-                 ' (' ~ _decisions | length ~ ' new decisions: other traffic?)' if _decisions | length > 1 else '' }}
+                 ' (trace ' ~ validate_router_trace.trace_id ~ ' not found among ' ~ _decisions | length ~ ' new decisions'
+                 ~ ('; without trace id: ' ~ _untraced | join('; ') if _untraced | length > 0 else '') ~ ')'
+                 if _matched_by == 'none' and _decisions | length > 0 else '' }}{{
+                 ' (' ~ _decisions | length ~ ' new decisions: other traffic?)'
+                 if _matched_by == 'newest' and _decisions | length > 1 else '' }}
             _error: >-
               {{ ' ' ~ validate_router_resp.msg | default('') if _status | int == -1 else '' }}{{
                  ' | ' ~ validate_router_decision.msg if validate_router_decision.failed | default(false) else '' }}

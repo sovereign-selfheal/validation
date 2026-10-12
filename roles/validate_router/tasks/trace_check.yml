@@ -1,0 +1,92 @@
+---
+# R0: does the router log the trace id of the request? Other clients (the triage agent, run by
+# real alerts) send requests while the validation runs. So each check that reads a routing
+# decision sends its own W3C traceparent and, in strict mode, uses only the decision with that
+# trace id. Strict mode needs tracing on and the trace id in the [policy-router] line. When the
+# router does not log it, the run uses the newest new decision instead, with a WARN.
+# Output: validation_trace_match (strict or newest), read by case.yml and validate_load.
+- name: Record R0 as skipped, tracing is off
+  ansible.builtin.set_fact:
+    validation_trace_match: newest
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _r:
+      group: routing
+      id: R0
+      name: router logs the trace id of the request
+      status: SKIP
+      detail: >-
+        observability.enabled is false: each check uses the newest new decision (other traffic
+        can make a case ambiguous)
+  when: not validation_ctx.observability_enabled | bool
+
+- name: Check the trace id of a request (R0)
+  when: validation_ctx.observability_enabled | bool
+  block:
+    - name: Note the start time and the trace of R0
+      ansible.builtin.set_fact:
+        validate_router_t0: "{{ now(utc=true, fmt='%s') }}"
+        validate_router_trace: "{{ lookup('validate_router_traceparent') }}"
+
+    # no_log: the request headers hold the API key.
+    - name: Send R0
+      ansible.builtin.uri:
+        url: "{{ validation_ctx.url }}"
+        method: POST
+        headers:
+          Content-Type: application/json
+          Authorization: "Bearer {{ validation_keys.research }}"
+          traceparent: "{{ validate_router_trace.header }}"
+        body_format: json
+        body:
+          model: "{{ validate_router_model }}"
+          max_tokens: 16
+          messages: [{role: user, content: Say hello.}]
+        timeout: "{{ validate_router_timeout }}"
+        validate_certs: "{{ validation_validate_certs }}"
+      register: validate_router_r0_resp
+      failed_when: false
+      no_log: true
+
+    - name: Read the routing decision of R0
+      policy_decisions:
+        namespace: "{{ validation_router_namespace }}"
+        label_selector: "{{ validate_router_litellm_selector }}"
+        container: "{{ validate_router_litellm_container | default(omit, true) }}"
+        since_seconds: "{{ (now(utc=true, fmt='%s') | int) - (validate_router_t0 | int) + 2 }}"
+        exclude: "{{ validation_seen_decisions }}"
+        trace_id: "{{ validate_router_trace.trace_id }}"
+        strict: true
+        timeout: "{{ validate_router_decision_timeout }}"
+      register: validate_router_r0_decision
+      failed_when: false
+      when: validate_router_r0_resp.status | default(-1) | int == 200
+
+    # PASS: strict mode. WARN: decisions found, none with the trace id -> newest mode for the run.
+    # FAIL (HTTP error, no decision, logs not readable): strict mode stays; the cases report the error.
+    - name: Record R0
+      ansible.builtin.set_fact:
+        validation_trace_match: "{{ 'newest' if _lost | bool else 'strict' }}"
+        validation_seen_decisions: "{{ validation_seen_decisions + (_decisions | map(attribute='_key') | list) }}"
+        validation_results: "{{ validation_results + [_r] }}"
+      vars:
+        _status: "{{ validate_router_r0_resp.status | default(-1) | int }}"
+        _decisions: "{{ validate_router_r0_decision.decisions | default([]) }}"
+        _found: "{{ validate_router_r0_decision.matched_by | default('none') == 'trace' }}"
+        _lost: "{{ _status | int == 200 and not _found | bool and _decisions | length > 0 }}"
+        _trace: "{{ validate_router_trace.trace_id }}"
+        _r:
+          group: routing
+          id: R0
+          name: router logs the trace id of the request
+          status: "{{ 'PASS' if _found | bool else ('WARN' if _lost | bool else 'FAIL') }}"
+          detail: >-
+            {% if _found | bool %}HTTP 200, decision with trace {{ _trace }} found: each check uses
+            only the decision with its own trace id
+            {%- elif _lost | bool %}HTTP 200, trace {{ _trace }} not found among {{ _decisions | length }}
+            new decisions: the router does not log the trace id of traceparent (check the otel callback
+            of LiteLLM, gitops components/litellm-router); each check uses the newest new decision
+            {%- elif _status | int != 200 %}HTTP {{ _status }} {{ validate_router_r0_resp.msg | default('') }}
+            {%- else %}HTTP 200, no routing decision found in the LiteLLM logs{{
+            ': ' ~ validate_router_r0_decision.msg if validate_router_r0_decision.failed | default(false) else '' }}
+            {%- endif %}

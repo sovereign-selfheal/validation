@@ -12,6 +12,9 @@ description:
     I(label_selector), merges them by timestamp and returns the decisions that are not in
     I(exclude).
   - Polls until at least one new decision appears or I(timeout) seconds pass. Read-only.
+  - With I(trace_id) and I(strict), polls until the decision with that trace id appears (the
+    request sent it in a W3C C(traceparent) header), so the decisions of other clients are
+    ignored. Without I(strict) the newest new decision is used, as with no trace id.
   - C(kubernetes.core.k8s_log) reads one pod only when it uses a label selector; LiteLLM
     runs with several replicas, hence this module.
 options:
@@ -35,6 +38,15 @@ options:
     type: list
     elements: str
     default: []
+  trace_id:
+    description: Trace id (32 hex characters) of the request, sent in its C(traceparent) header.
+    type: str
+  strict:
+    description:
+      - Use only the decision with I(trace_id), never the newest decision of another request.
+        Set it when the router keeps the trace id (tracing on, checked by R0).
+    type: bool
+    default: false
   timeout:
     description: Seconds to wait for a new decision.
     type: float
@@ -53,15 +65,23 @@ decisions:
   type: list
   returned: always
 decision:
-  description: The newest new decision, or an empty dict.
+  description: >-
+    The decision of the request: the one with I(trace_id), else (not I(strict)) the newest new
+    decision, or an empty dict.
   type: dict
+  returned: always
+matched_by:
+  description: >-
+    C(trace) (found by I(trace_id)), C(newest) (the newest new decision, not I(strict)) or
+    C(none) (no decision found).
+  type: str
   returned: always
 """
 
 from ansible.module_utils.basic import AnsibleModule
 
 try:
-    from ansible.module_utils.policy_router import decision_key, load_core_v1, wait_new_decisions
+    from ansible.module_utils.policy_router import decision_key, load_core_v1, wait_decision
     HAS_DEPS = True
 except ImportError:  # the kubernetes client is imported lazily; this guards only the module_utils file
     HAS_DEPS = False
@@ -75,6 +95,8 @@ def main():
             "container": {"type": "str"},
             "since_seconds": {"type": "int", "required": True},
             "exclude": {"type": "list", "elements": "str", "default": []},
+            "trace_id": {"type": "str"},
+            "strict": {"type": "bool", "default": False},
             "timeout": {"type": "float", "default": 10},
             "kubeconfig": {"type": "path"},
             "context": {"type": "str"},
@@ -86,13 +108,14 @@ def main():
     p = module.params
     try:
         core_v1 = load_core_v1(p["kubeconfig"], p["context"])
-        new = wait_new_decisions(core_v1, p["namespace"], p["label_selector"], p["since_seconds"],
-                                 exclude=p["exclude"], timeout=p["timeout"], container=p["container"])
+        new, decision, matched_by = wait_decision(
+            core_v1, p["namespace"], p["label_selector"], p["since_seconds"], exclude=p["exclude"],
+            timeout=p["timeout"], container=p["container"], trace_id=p["trace_id"], strict=p["strict"])
     except Exception as exc:  # report any API or config error as a module failure
         module.fail_json(msg=f"cannot read the LiteLLM logs: {type(exc).__name__}: {exc}")
-    for decision in new:
-        decision["_key"] = decision_key(decision)
-    module.exit_json(changed=False, decisions=new, decision=new[-1] if new else {})
+    for item in new:
+        item["_key"] = decision_key(item)
+    module.exit_json(changed=False, decisions=new, decision=decision, matched_by=matched_by)
 
 
 if __name__ == "__main__":

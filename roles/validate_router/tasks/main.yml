@@ -9,6 +9,15 @@
       Presidio NER {{ 'on' if validation_ctx.ner_enabled | bool else 'off' }})
   tags: [access, routing, namespace, budget, demo]
 
+# R0 sets validation_trace_match (strict or newest) for every group that reads a routing decision,
+# including the harness (sota, context) and F2 (decision).
+- name: Check that the router logs the trace id of a request
+  ansible.builtin.include_tasks:
+    file: trace_check.yml
+    apply:
+      tags: [access, routing, namespace, budget, demo, decision, sota, context]
+  tags: [access, routing, namespace, budget, demo, decision, sota, context]
+
 - name: Load the routing cases
   ansible.builtin.include_vars:
     file: "{{ validate_router_cases_file }}"

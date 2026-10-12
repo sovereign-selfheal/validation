@@ -7,9 +7,18 @@ the repr of a Python dict (not JSON). LiteLLM runs with several replicas, so the
 every pod are read and merged by timestamp.
 
 Used by the module ``policy_decisions`` and by ``harness/load.py``.
+
+Other clients (for example the triage agent, run by real alerts) can send requests at the same
+time. Each check therefore sends its own W3C ``traceparent`` header: the router keeps that trace
+id in ``trace_id``, so the check finds its own decision among the others (``strict`` mode). The
+caller chooses the mode; it never comes from the log content, because some decisions have no
+``trace_id`` even with tracing on (the fail-closed decision). Without tracing on the cluster, or
+when the router does not keep the trace id, the caller turns ``strict`` off and the newest new
+decision is used.
 """
 
 import ast
+import secrets
 import time
 
 MARKER = "[policy-router] {"
@@ -72,12 +81,40 @@ def read_decisions(core_v1, namespace, label_selector, since_seconds, container=
     return decisions
 
 
-def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclude=(), timeout=10.0,
-                       interval=1.0, container=None):
-    """Poll the logs until at least one decision not in ``exclude`` appears, or the timeout.
+def new_traceparent():
+    """A new W3C ``traceparent`` header value and its trace id: ``(header, trace_id)``.
+
+    The router logs the trace id of the parent span, sampled or not. The sampled flag (``01``) is
+    set so that the spans of the validation requests reach Tempo too.
+    """
+    trace_id = secrets.token_hex(16)
+    return f"00-{trace_id}-{secrets.token_hex(8)}-01", trace_id
+
+
+def pick_decision(new, trace_id=None, strict=False):
+    """The decision of one request among the new decisions: ``(decision, matched_by)``.
+
+    ``matched_by`` is ``trace`` (the newest decision with ``trace_id``; a retry can log the same
+    id twice), ``newest`` (not ``strict``: the newest new decision, maybe of another request) or
+    ``none`` (no decision; with ``strict`` the decision of another request is never used).
+    """
+    if trace_id:
+        mine = [d for d in new if d.get("trace_id") == trace_id]
+        if mine:
+            return mine[-1], "trace"
+    if new and not (strict and trace_id):
+        return new[-1], "newest"
+    return {}, "none"
+
+
+def wait_decision(core_v1, namespace, label_selector, since_seconds, exclude=(), timeout=10.0,
+                  interval=1.0, container=None, trace_id=None, strict=False):
+    """Poll the logs until the decision of the request is found (see ``pick_decision``), or the
+    timeout. Decisions with a key in ``exclude`` are not new.
 
     The kubelet serves a log line a little after the process writes it, so one read right
-    after the HTTP answer can miss it. Returns the new decisions, oldest first.
+    after the HTTP answer can miss it. Returns ``(new, decision, matched_by)``: the new
+    decisions (oldest first) and the pick.
     """
     excluded = set(exclude)
     start = time.monotonic()
@@ -85,8 +122,9 @@ def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclud
         elapsed = time.monotonic() - start
         new = [d for d in read_decisions(core_v1, namespace, label_selector, since_seconds + elapsed, container)
                if decision_key(d) not in excluded]
-        if new or elapsed >= timeout:
-            return new
+        decision, matched_by = pick_decision(new, trace_id, strict)
+        if matched_by != "none" or elapsed >= timeout:
+            return new, decision, matched_by
         time.sleep(interval)
 
 
