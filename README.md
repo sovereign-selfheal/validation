@@ -58,8 +58,13 @@ Things to know:
   (`NER_ENABLED=0` in the LiteLLM Deployment, router v0.10.0). The validation reads that
   variable: when C1 is off, the Presidio labels of D1, D2, D4 and D6 (`ner_reason_contains`) are
   not checked; their routing decisions are.
-- **One run at a time.** The routing decision is read from the `[policy-router]` log lines of
-  LiteLLM. Other traffic during a run can make a routing case ambiguous (the detail says so).
+- **Other traffic.** The routing decision is read from the `[policy-router]` log lines of
+  LiteLLM. Each request of a check sends its own W3C `traceparent` header, and the router logs
+  that trace id, so the check finds its own decision even while other clients send requests (for
+  example the triage agent, run by real alerts on a fresh cluster). Without tracing on the cluster
+  (`observability.enabled: false`) the decisions have no trace id: the check takes the newest new
+  decision, and other traffic can make a case ambiguous (the detail says `other traffic?`).
+  Run one validation at a time.
 - **Changes.** `platform`, `access`, `routing` and `demo` are read-only (changed=0).
   `isolation` creates and deletes the namespace `validation-probe`. `failover` and `selfheal`
   report their changes.

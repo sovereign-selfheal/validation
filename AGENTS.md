@@ -107,6 +107,10 @@ this repo in the same change set.
 - **`router` repo.** The format of the `[policy-router] {...}` log line (a Python dict repr with
   `routed_to`, `decided_by`, `reason`, `team`, `trace_id`). The parser is
   `roles/validate_router/module_utils/policy_router.py`; its tests are in `tests/`.
+  The `trace_id` of a decision is the trace id of the W3C `traceparent` header of the request (the
+  Gateway and LiteLLM keep it): every check that reads a decision sends its own trace id and picks
+  the decision by it. Only when the decisions have no trace id (tracing off) does it take the
+  newest one.
   D1-D8 need router v0.4.0 or later (`(no id)`, `(<2 words)` markers). F2 needs router v0.7.0
   (the C2 signal label `fallback/llm@<conf>` of the systemone backend).
 - **`ansible` repo.** Operator packages (`validate_platform_operators`), Route `maas-router` and

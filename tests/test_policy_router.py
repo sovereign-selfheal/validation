@@ -99,3 +99,88 @@ def test_read_decisions_merges_pods_by_time_and_decodes_utf8():
     got = read_decisions(core, "maas-routing", "app=litellm", 60, "litellm")
     assert [d["trace_id"] for d in got] == ["aaa", "bbb"]
     assert [d["_pod"] for d in got] == ["litellm-2", "litellm-1"]
+
+
+def _without_trace(decision):
+    return {k: v for k, v in decision.items() if k != "trace_id"}
+
+
+def test_new_traceparent_is_w3c_and_sampled():
+    from policy_router import new_traceparent
+
+    header, trace_id = new_traceparent()
+    version, tid, span_id, flags = header.split("-")
+    assert (version, tid, flags) == ("00", trace_id, "01")
+    assert len(trace_id) == 32 and len(span_id) == 16
+    assert int(trace_id, 16) and int(span_id, 16)
+    assert new_traceparent()[1] != trace_id
+
+
+def test_pick_decision_by_trace_among_other_traffic():
+    from policy_router import pick_decision
+
+    agent = dict(DECISION, trace_id="aaa", team="agents", routed_to="sota-smart")
+    mine = dict(DECISION, trace_id="bbb")
+    later = dict(DECISION, trace_id="ccc", team="agents")
+    assert pick_decision([agent, mine, later], "bbb") == (mine, "trace")
+
+
+def test_pick_decision_takes_the_newest_of_the_same_trace():
+    from policy_router import pick_decision
+
+    first = dict(DECISION, trace_id="bbb", routed_to="sota-smart")
+    retry = dict(DECISION, trace_id="bbb")
+    assert pick_decision([first, retry], "bbb") == (retry, "trace")
+
+
+def test_pick_decision_never_takes_another_trace():
+    from policy_router import pick_decision
+
+    agent = dict(DECISION, trace_id="aaa", team="agents")
+    assert pick_decision([agent], "bbb") == ({}, "none")
+
+
+def test_pick_decision_without_tracing_takes_the_newest():
+    from policy_router import pick_decision
+
+    old, new = _without_trace(DECISION), dict(_without_trace(DECISION), routed_to="sota-smart")
+    assert pick_decision([old, new], "bbb") == (new, "newest")
+    assert pick_decision([old, new]) == (new, "newest")
+    assert pick_decision([], "bbb") == ({}, "newest")
+
+
+def test_wait_returns_when_the_trace_appears(monkeypatch):
+    import policy_router
+
+    agent = dict(DECISION, trace_id="aaa", team="agents")
+    mine = dict(DECISION, trace_id="bbb")
+    reads = iter([[agent], [agent], [agent, mine]])
+    monkeypatch.setattr(policy_router, "read_decisions", lambda *a, **k: [dict(d) for d in next(reads)])
+    monkeypatch.setattr(policy_router.time, "sleep", lambda s: None)
+    new = policy_router.wait_new_decisions(None, "ns", "app=litellm", 5, timeout=60, trace_id="bbb")
+    assert [d["trace_id"] for d in new] == ["aaa", "bbb"]
+
+
+def test_wait_without_tracing_returns_at_the_first_decision(monkeypatch):
+    import policy_router
+
+    calls = []
+
+    def read(*args, **kwargs):
+        calls.append(1)
+        return [_without_trace(DECISION)]
+
+    monkeypatch.setattr(policy_router, "read_decisions", read)
+    new = policy_router.wait_new_decisions(None, "ns", "app=litellm", 5, timeout=60, trace_id="bbb")
+    assert len(new) == 1 and len(calls) == 1
+
+
+def test_wait_for_a_missing_trace_stops_at_the_timeout(monkeypatch):
+    import policy_router
+
+    clock = iter(range(0, 100, 4))
+    monkeypatch.setattr(policy_router, "read_decisions", lambda *a, **k: [dict(DECISION, trace_id="aaa")])
+    monkeypatch.setattr(policy_router.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(policy_router.time, "sleep", lambda s: None)
+    new = policy_router.wait_new_decisions(None, "ns", "app=litellm", 5, timeout=10, trace_id="bbb")
+    assert policy_router.pick_decision(new, "bbb") == ({}, "none")

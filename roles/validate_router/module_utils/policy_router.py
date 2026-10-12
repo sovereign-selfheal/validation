@@ -7,9 +7,15 @@ the repr of a Python dict (not JSON). LiteLLM runs with several replicas, so the
 every pod are read and merged by timestamp.
 
 Used by the module ``policy_decisions`` and by ``harness/load.py``.
+
+Other clients (for example the triage agent, run by real alerts) can send requests at the same
+time. Each check therefore sends its own W3C ``traceparent`` header: the router keeps that trace
+id in ``trace_id``, so the check finds its own decision among the others. Without tracing on the
+cluster the decisions have no ``trace_id``; then the newest new decision is used.
 """
 
 import ast
+import secrets
 import time
 
 MARKER = "[policy-router] {"
@@ -72,10 +78,39 @@ def read_decisions(core_v1, namespace, label_selector, since_seconds, container=
     return decisions
 
 
-def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclude=(), timeout=10.0,
-                       interval=1.0, container=None):
-    """Poll the logs until at least one decision not in ``exclude`` appears, or the timeout.
+def new_traceparent():
+    """A new W3C ``traceparent`` header value and its trace id: ``(header, trace_id)``.
 
+    The sampled flag (``01``) is set: with a parent-based sampler an unsampled parent gives no
+    span, so the router would log no ``trace_id``.
+    """
+    trace_id = secrets.token_hex(16)
+    return f"00-{trace_id}-{secrets.token_hex(8)}-01", trace_id
+
+
+def pick_decision(new, trace_id=None):
+    """The decision of one request among the new decisions: ``(decision, matched_by)``.
+
+    ``matched_by`` is ``trace`` (the newest decision with ``trace_id``; a retry can log the same
+    id twice), ``newest`` (no ``trace_id`` given, or no decision has one: tracing is off) or
+    ``none`` (other decisions have a trace id, but not this one: the decision of the request
+    was not found; never use the decision of another request).
+    """
+    if trace_id:
+        mine = [d for d in new if d.get("trace_id") == trace_id]
+        if mine:
+            return mine[-1], "trace"
+        if any(d.get("trace_id") for d in new):
+            return {}, "none"
+    return (new[-1] if new else {}), "newest"
+
+
+def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclude=(), timeout=10.0,
+                       interval=1.0, container=None, trace_id=None):
+    """Poll the logs until a new decision (not in ``exclude``) appears, or the timeout.
+
+    With ``trace_id``, poll until the decision with that trace id appears; stop early only when
+    the new decisions have no trace id at all (tracing is off, see ``pick_decision``).
     The kubelet serves a log line a little after the process writes it, so one read right
     after the HTTP answer can miss it. Returns the new decisions, oldest first.
     """
@@ -85,7 +120,9 @@ def wait_new_decisions(core_v1, namespace, label_selector, since_seconds, exclud
         elapsed = time.monotonic() - start
         new = [d for d in read_decisions(core_v1, namespace, label_selector, since_seconds + elapsed, container)
                if decision_key(d) not in excluded]
-        if new or elapsed >= timeout:
+        if new and pick_decision(new, trace_id)[1] != "none":
+            return new
+        if elapsed >= timeout:
             return new
         time.sleep(interval)
 

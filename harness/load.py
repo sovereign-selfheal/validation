@@ -37,7 +37,7 @@ import requests
 import urllib3
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "roles/validate_router/module_utils"))
-from policy_router import decision_key, load_core_v1, wait_new_decisions  # noqa: E402
+from policy_router import decision_key, load_core_v1, new_traceparent, pick_decision, wait_new_decisions  # noqa: E402
 
 LONG = ("Analyze in depth how a relational database executes a query: parsing, planning, cost-based "
         "optimization, join algorithms and indexes. Explain why each step matters, compare the join "
@@ -128,8 +128,10 @@ class Suite:
         self.results.append({"group": group, "id": rid, "name": name, "status": status, "detail": detail})
         print(f"{status:<4}  {rid}  {name} | {detail}", flush=True)
 
-    def chat(self, prompt, tier="research", max_tokens=200, timeout=660, **extra):
+    def chat(self, prompt, tier="research", max_tokens=200, timeout=660, traceparent=None, **extra):
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.keys[tier]}"}
+        if traceparent:
+            headers["traceparent"] = traceparent
         body = {"model": "auto", "messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens}
         body.update(extra)
         start = time.time()
@@ -137,13 +139,17 @@ class Suite:
         return r, time.time() - start
 
     def routed(self, prompt, **kw):
-        """Send one request; return (response, seconds, decision or {})."""
+        """Send one request; return (response, seconds, decision or {}).
+
+        The request sends its own trace id, so the decisions of other clients are ignored."""
+        traceparent, trace_id = new_traceparent()
         start = time.time()
-        r, secs = self.chat(prompt, **kw)
+        r, secs = self.chat(prompt, traceparent=traceparent, **kw)
         new = wait_new_decisions(self.core, self.args.namespace, self.args.litellm_selector,
-                                 time.time() - start + 2, exclude=self.seen, container=self.args.container)
+                                 time.time() - start + 2, exclude=self.seen, container=self.args.container,
+                                 trace_id=trace_id)
         self.seen.update(decision_key(d) for d in new)
-        return r, secs, (new[-1] if new else {})
+        return r, secs, pick_decision(new, trace_id)[0]
 
     @staticmethod
     def usage(r):
@@ -162,7 +168,9 @@ class Suite:
     def agent_call(self, messages, max_tokens=300):
         """One streamed agent call: (status, seconds to the first chunk, total seconds, prompt
         tokens, decision)."""
-        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.keys['research']}"}
+        traceparent, trace_id = new_traceparent()
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.keys['research']}",
+                   "traceparent": traceparent}
         body = {"model": "auto", "messages": messages, "max_tokens": max_tokens, "stream": True,
                 "stream_options": {"include_usage": True}}
         start, first, prompt_tokens = time.time(), None, None
@@ -178,9 +186,9 @@ class Suite:
             status = r.status_code
         total = time.time() - start
         new = wait_new_decisions(self.core, self.args.namespace, self.args.litellm_selector, total + 2,
-                                 exclude=self.seen, container=self.args.container)
+                                 exclude=self.seen, container=self.args.container, trace_id=trace_id)
         self.seen.update(decision_key(d) for d in new)
-        return status, first, total, prompt_tokens, (new[-1] if new else {})
+        return status, first, total, prompt_tokens, pick_decision(new, trace_id)[0]
 
     # ------------------------------------------------------------------ groups
     def sota(self):
