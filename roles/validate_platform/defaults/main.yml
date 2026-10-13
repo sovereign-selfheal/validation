@@ -79,9 +79,13 @@ validate_platform_argocd_name: openshift-gitops
 
 # Namespace policy of the router (router v0.11.0; ansible repo, roles/argocd_seed; P24, P25).
 validate_platform_data_class_label: sovereign-selfheal.io/data-class
+# agentic-triage (shared services) and the monitored-application namespaces (ansible
+# argocd_seed_app_namespaces, one quarkus-buggy-app and one agent each).
 validate_platform_data_class_expected:
   agentic-triage: public
   payments: restricted
+  rh-reserve: public
+  reverse-proxy-app: public
 validate_platform_namespace_reader_role: sovereign-selfheal-namespace-reader
 validate_platform_namespace_reader_bindings:
   litellm-namespace-reader: litellm

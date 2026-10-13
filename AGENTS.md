@@ -126,7 +126,7 @@ this repo in the same change set.
   `kuadrant-system/limitador`, ServiceMonitor `kuadrant-system/authorino`, TelemetryPolicy
   `openshift-ingress/openshift-ai-inference-labels`, no `istio-pod-monitor`), the retention (15d) and
   the volumes of the user workload Prometheus (P21), the `sovereign-selfheal.io/data-class` labels
-  (`agentic-triage` public, `payments` restricted), the ClusterRole
+  (`agentic-triage`, `rh-reserve` and `reverse-proxy-app` public, `payments` restricted), the ClusterRole
   `sovereign-selfheal-namespace-reader` and its bindings `litellm-namespace-reader` and
   `routing-live-view-namespace-reader` (P24, N1-N8).
 
