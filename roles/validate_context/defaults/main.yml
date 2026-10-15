@@ -43,5 +43,6 @@ validation_profile_defaults:
   secretStore: {enabled: false}
   decisionModel: {enabled: false}
 
-# The router answers with a self-signed certificate on RHDP test clusters.
+# false by default: on RHDP the router has a trusted certificate (cert-manager, ACME), but on a
+# cluster with the default ingress certificate it does not. Set true to check the certificate.
 validation_validate_certs: false
