@@ -13,6 +13,11 @@ validate_router_litellm_container: litellm
 # Seconds to wait for the decision line after the answer (kubelet log latency).
 validate_router_decision_timeout: 10
 
+# Public agents (N9): the TriageAgent CRs of the triage-agent-operator (ansible repo) and the label that
+# marks a namespace public (ansible repo, roles/argocd_seed).
+validate_router_agent_api_version: triage.sovereign-selfheal.io/v1alpha1
+validate_router_data_class_label: sovereign-selfheal.io/data-class
+
 # Access cases: no key, invalid key, tier from the key and not from a forged header.
 # key: "" = no Authorization header; a literal value = that key; tier = key of that tier.
 validate_router_access_cases:

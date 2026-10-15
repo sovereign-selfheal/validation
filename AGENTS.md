@@ -30,6 +30,9 @@ Every check exists **once**: in Ansible, or in `harness/load.py`, never in both.
   namespace. Anything that loads the cluster, uses up a token budget or changes a managed object
   is a *disruptive* group: it runs only with `validation_disruptive: true` or when its tag is
   named with `--tags` (`when: validation_disruptive | bool or '<tag>' in ansible_run_tags`).
+  N9 (group `namespace`) sends one SOTA request per public agent with the agent's own key: it uses
+  about 2-3k tokens of a 30k budget per 5 minutes, it does not use the budget up, so it stays in a
+  default group.
 - **A failed check does not stop the run.** Each check records one result
   `{group, id, name, status, detail}` in `validation_results` (`status`: `PASS`, `FAIL`, `WARN`,
   `SKIP`). Only `validate_report` fails the play, at the end. Use `WARN` for states that are
@@ -129,6 +132,13 @@ this repo in the same change set.
   (`agentic-triage` public, `payments` restricted), the ClusterRole
   `sovereign-selfheal-namespace-reader` and its bindings `litellm-namespace-reader` and
   `routing-live-view-namespace-reader` (P24, N1-N8).
+- **`triage-agent-operator` repo** (N9). The `TriageAgent` CRD
+  (`triage.sovereign-selfheal.io/v1alpha1`) and how the operator resolves the knowledge
+  (`spec.knowledge.configMapName` or the ConfigMap `<name>-knowledge`, key `spec.knowledge.fileName`,
+  default `knowledge.md`) and the API key (`spec.apiKey.existingSecret` or the Secret `<name>-apikey`,
+  key `api_key`). The knowledge itself is in the `gitops` repo
+  (`components/triage-agent-operator-cr/files/knowledge.md`): N9 fails when it contains a word of a
+  privacy lexicon (`privacy-plus.yaml`).
 
 ## 6. Out of scope
 

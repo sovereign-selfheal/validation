@@ -198,6 +198,27 @@ namespace_cases:
     requires: [namespace_scan]
     expect: {routed_to: local-fast, decided_by: namespace, ns_restricted: [payments]}
 
+# Public agents: the TriageAgent CRs (triage-agent-operator) in namespaces labelled
+# sovereign-selfheal.io/data-class=public. The router checks the whole request, the system prompt
+# included, and each agent puts its knowledge (knowledge.md) in its instructions. So one lexicon word
+# in the knowledge keeps every request of the agent LOCAL (gitops #46 at 2ecb9fd: "credentials").
+# N9 sends the knowledge of each public agent as the system message, with the agent's own API key
+# (its tier), and the prompt below; one result per agent: N9a, N9b, ... (agents sorted by namespace).
+# Extra fields:
+#   warn_reason_contains   a decision reason with one of these strings is a WARN, not a FAIL (the
+#                          SOTA budget of the agent's tier is used by the live agents)
+# The request uses about 2-3k SOTA tokens of the agent's tier (budget 30k / 5 minutes): it does not use
+# the budget up, so the case stays in the default group `namespace`.
+agent_cases:
+  - id: N9
+    name: knowledge of the public agent -> SOTA
+    prompt: >-
+      Investigate why the error rate of the demo application went up in the last hour. Explain the most
+      likely root cause step by step and what to check next.
+    max_tokens: 60
+    expect: {routed_to: sota-smart, decided_by: all-sota}
+    warn_reason_contains: ["SOTA budget of tier"]
+
 # SOTA budget per tier (router v0.12.0, gitops sotaBudget.enabled). The tier `validation` has a SOTA
 # budget of 1 token: after one SOTA answer of this tier, its requests stay LOCAL for the window
 # (5 minutes). B1 reads the budget (any destination: an earlier run may have used the budget); B2,

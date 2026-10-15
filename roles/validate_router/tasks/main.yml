@@ -63,6 +63,112 @@
     validate_router_group: namespace
   tags: [namespace]
 
+# N9: the knowledge of a public agent must not keep its requests LOCAL. The agent's knowledge and API
+# key are read the way the triage-agent-operator resolves them: spec.knowledge.configMapName or the
+# ConfigMap <name>-knowledge (key spec.knowledge.fileName, default knowledge.md), and
+# spec.apiKey.existingSecret or the Secret <name>-apikey (key api_key).
+- name: Read the public agents (N9)
+  tags: [namespace]
+  block:
+    - name: Read the TriageAgent CRs
+      kubernetes.core.k8s_info:
+        api_version: "{{ validate_router_agent_api_version }}"
+        kind: TriageAgent
+      register: validate_router_agents
+      failed_when: false
+
+    - name: Read the public namespaces
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Namespace
+        label_selectors: ["{{ validate_router_data_class_label }}=public"]
+      register: validate_router_public_ns
+
+    - name: Keep the agents of the public namespaces
+      ansible.builtin.set_fact:
+        validate_router_public_agents: >-
+          {{ validate_router_agents.resources | default([])
+             | selectattr('metadata.namespace', 'in', validate_router_public_ns.resources | map(attribute='metadata.name') | list)
+             | sort(attribute='metadata.namespace') | list }}
+
+    - name: Skip N9, no public agent
+      ansible.builtin.set_fact:
+        validation_results: "{{ validation_results + [_r] }}"
+      vars:
+        _r:
+          group: namespace
+          id: N9
+          name: "{{ (validate_router_cases.agent_cases | first).name }}"
+          status: SKIP
+          detail: >-
+            no TriageAgent in a namespace labelled {{ validate_router_data_class_label }}=public{{
+            ' (TriageAgent API not found: ' ~ validate_router_agents.msg | default('') ~ ')'
+            if validate_router_agents.failed | default(false) else '' }}
+      when: validate_router_public_agents | length == 0
+
+    - name: Read the knowledge ConfigMap of each public agent
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: ConfigMap
+        namespace: "{{ item.metadata.namespace }}"
+        name: "{{ item.spec.knowledge.configMapName | default('', true) or item.metadata.name ~ '-knowledge' }}"
+      loop: "{{ validate_router_public_agents }}"
+      loop_control:
+        label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+      register: validate_router_agent_cms
+
+    - name: Read the API key Secret of each public agent (not logged)
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Secret
+        namespace: "{{ item.metadata.namespace }}"
+        name: "{{ item.spec.apiKey.existingSecret | default('', true) or item.metadata.name ~ '-apikey' }}"
+      loop: "{{ validate_router_public_agents }}"
+      loop_control:
+        label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+      register: validate_router_agent_secrets
+      no_log: true
+
+    # One case per agent: N9a, N9b, ... The knowledge and the key stay in two dicts by namespace,
+    # out of the loop items.
+    - name: Build the N9 cases (not logged)
+      ansible.builtin.set_fact:
+        validate_router_agent_knowledge: "{{ validate_router_agent_knowledge | default({}) | combine({_ns: _knowledge}) }}"
+        validate_router_agent_keys: "{{ validate_router_agent_keys | default({}) | combine({_ns: _key}) }}"
+        validate_router_agent_run: "{{ validate_router_agent_run | default([]) + [_case] }}"
+      loop: "{{ validate_router_public_agents | zip(validate_router_agent_cms.results, validate_router_agent_secrets.results) | list }}"
+      loop_control:
+        index_var: validate_router_agent_index
+        label: "{{ item.0.metadata.namespace }}/{{ item.0.metadata.name }}"
+      vars:
+        _agent: "{{ item.0 }}"
+        _ns: "{{ _agent.metadata.namespace }}"
+        _file: "{{ _agent.spec.knowledge.fileName | default('knowledge.md', true) }}"
+        _knowledge: "{{ ((item.1.resources | default([]) | first | default({})).data | default({}))[_file] | default('') }}"
+        _key: >-
+          {{ ((item.2.resources | default([]) | first | default({})).data | default({})).api_key | default('') | b64decode }}
+        _case: >-
+          {{ validate_router_cases.agent_cases | first
+             | combine({'id': (validate_router_cases.agent_cases | first).id ~ 'abcdefghijklmnopqrstuvwxyz'[validate_router_agent_index],
+                        'name': (validate_router_cases.agent_cases | first).name ~ ' (' ~ _ns ~ '/' ~ _agent.metadata.name ~ ')',
+                        'agent_namespace': _ns,
+                        'agent_missing': ([] if _knowledge | length > 0 else ['knowledge ' ~ _file])
+                                         + ([] if _key | length > 0 else ['API key'])}) }}
+      no_log: true
+
+- name: Public agent cases (N9)
+  ansible.builtin.include_tasks:
+    file: case.yml
+    apply:
+      tags: [namespace]
+  loop: "{{ validate_router_agent_run | default([]) }}"
+  loop_control:
+    loop_var: validate_router_case
+    label: "{{ validate_router_case.id }}"
+  vars:
+    validate_router_group: namespace
+  tags: [namespace]
+
 # Disruptive: uses up the SOTA budget of the tier validation for its window (5 minutes).
 - name: SOTA budget cases (router v0.12.0; skipped when the budget is off)
   ansible.builtin.include_tasks:
