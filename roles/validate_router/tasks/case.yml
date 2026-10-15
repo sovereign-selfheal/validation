@@ -7,6 +7,10 @@
 # `wait_budget_counted: <tier>`: before the request, poll Redis (from a LiteLLM pod) until the router
 # counted SOTA tokens of that tier in the current window (it counts an answer after it ends).
 # `expect.decision`: fields of the decision that must be equal.
+# `agent_namespace` (N9): the system message is the knowledge of the agent of that namespace and the key
+# is the agent's API key (validate_router_agent_knowledge / validate_router_agent_keys, main.yml);
+# `agent_missing` lists what was not found (a FAIL). `warn_reason_contains`: a failed case whose
+# decision reason has one of these strings is a WARN.
 - name: "Check the requirements of {{ validate_router_case.id }}"
   ansible.builtin.set_fact:
     validate_router_missing: >-
@@ -37,14 +41,34 @@
            | join(', ') }}
   when: validate_router_missing | length > 0
 
+- name: "Record a FAIL, the agent is incomplete: {{ validate_router_case.id }}"
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _r:
+      group: "{{ validate_router_group }}"
+      id: "{{ validate_router_case.id }}"
+      name: "{{ validate_router_case.name }}"
+      status: FAIL
+      detail: "not run: {{ validate_router_case.agent_missing | join(' and ') }} not found in {{ validate_router_case.agent_namespace }}"
+  when:
+    - validate_router_missing | length == 0
+    - validate_router_case.agent_missing | default([]) | length > 0
+
 - name: "Run {{ validate_router_case.id }}"
-  when: validate_router_missing | length == 0
+  when:
+    - validate_router_missing | length == 0
+    - validate_router_case.agent_missing | default([]) | length == 0
   vars:
     _expect: "{{ validate_router_case.expect }}"
     _want_status: "{{ _expect.status | default(200) | int }}"
     _key: >-
-      {{ validate_router_case.key if validate_router_case.key is defined
+      {{ validate_router_agent_keys[validate_router_case.agent_namespace] if validate_router_case.agent_namespace is defined
+         else validate_router_case.key if validate_router_case.key is defined
          else validation_keys[validate_router_case.tier | default('research')] }}
+    _system: >-
+      {{ [{'role': 'system', 'content': validate_router_agent_knowledge[validate_router_case.agent_namespace]}]
+         if validate_router_case.agent_namespace is defined else [] }}
   block:
     - name: "Read a LiteLLM pod for {{ validate_router_case.id }}"
       kubernetes.core.k8s_info:
@@ -124,7 +148,7 @@
             body: >-
               {{ {'model': validate_router_model,
                   'max_tokens': validate_router_case.max_tokens | default(validate_router_max_tokens) | int,
-                  'messages': [{'role': 'user', 'content': validate_router_case.prompt}]}
+                  'messages': _system + [{'role': 'user', 'content': validate_router_case.prompt}]}
                  | combine({'tools': validate_router_case.tools} if validate_router_case.tools is defined else {})
                  | combine({'selfheal_namespaces': validate_router_case.hint} if validate_router_case.hint is defined else {}) }}
             timeout: "{{ validate_router_timeout }}"
@@ -203,11 +227,12 @@
               - "{{ _expect.content_excludes | default([]) | select('in', _content) | list | length == 0 }}"
               - "{{ _want_status | int != 200 or _d | length > 0 }}"
               - "{{ not validate_router_decision.failed | default(false) }}"
+            _warn: "{{ validate_router_case.warn_reason_contains | default([]) | select('in', _reason) | list | length > 0 }}"
             _r:
               group: "{{ validate_router_group }}"
               id: "{{ validate_router_case.id }}"
               name: "{{ validate_router_case.name }}"
-              status: "{{ 'PASS' if _checks | reject | list | length == 0 else 'FAIL' }}"
+              status: "{{ 'PASS' if _checks | reject | list | length == 0 else ('WARN' if _warn | bool else 'FAIL') }}"
               detail: >-
                 HTTP {{ _status }} {{ _secs }}s{{ ' ' ~ _route if _want_status | int == 200 else '' }}{{
                 ' | tool calls: ' ~ (_tool_calls | join(', ') or 'none') if _expect.tool_call is defined else '' }}{{ _error }}
