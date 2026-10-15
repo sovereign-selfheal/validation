@@ -25,6 +25,48 @@
       detail: >-
         {{ _apps | length }} Applications{{ ', not Synced/Healthy: ' ~ (_bad | unique | join(', ')) if _bad else '' }}
 
+# The ansible repo gives the application controller more memory than the operator default (2Gi):
+# with 2Gi, three client-side applies at once OOMKilled it in a loop (2026-10-15).
+- name: Read the Argo CD application controller pod
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: "{{ validation_argocd_namespace }}"
+    name: "{{ validate_platform_argocd_name }}-application-controller-0"
+  register: validate_platform_argocd_controller
+
+- name: Record P27 (memory of the Argo CD application controller)
+  ansible.builtin.set_fact:
+    validation_results: "{{ validation_results + [_r] }}"
+  vars:
+    _units: {Ki: 1024, Mi: 1048576, Gi: 1073741824, Ti: 1099511627776, k: 1000, M: 1000000, G: 1000000000, T: 1000000000000}
+    _pod: "{{ validate_platform_argocd_controller.resources | first | default({}) }}"
+    _container: >-
+      {{ (_pod.spec | default({})).containers | default([]) | selectattr('name', 'eq', 'argocd-application-controller')
+         | first | default({}) }}
+    _status: >-
+      {{ (_pod.status | default({})).containerStatuses | default([]) | selectattr('name', 'eq', 'argocd-application-controller')
+         | first | default({}) }}
+    _limit: "{{ ((_container.resources | default({})).limits | default({})).memory | default('') | string }}"
+    _min: "{{ validate_platform_argocd_controller_min_memory | string }}"
+    _bytes: >-
+      {{ [_limit, _min] | map('regex_replace', '^([0-9.]+)([A-Za-z]*)$', '\1 \2') | map('split', ' ') | list }}
+    _limit_bytes: "{{ (_bytes[0][0] | float * _units.get(_bytes[0][1] | default(''), 1)) if _limit else 0 }}"
+    _min_bytes: "{{ _bytes[1][0] | float * _units.get(_bytes[1][1] | default(''), 1) }}"
+    _last: "{{ ((_status.lastState | default({})).terminated | default({})).reason | default('') }}"
+    _restarts: "{{ _status.restartCount | default(0) | int }}"
+    _r:
+      group: platform
+      id: P27
+      name: Argo CD application controller memory limit
+      status: >-
+        {{ 'FAIL' if not _container or not _limit or (_limit_bytes | float) < (_min_bytes | float)
+           else ('WARN' if _last == 'OOMKilled' else 'PASS') }}
+      detail: >-
+        {{ 'controller pod not found' if not _container else
+           'memory limit ' ~ (_limit or 'none') ~ ' (expected at least ' ~ _min ~ '), ' ~ _restarts ~ ' restart(s)'
+           ~ (', last termination OOMKilled: the controller ran out of memory since its start' if _last == 'OOMKilled' else '') }}
+
 - name: Read the pods of the HA deployments
   kubernetes.core.k8s_info:
     api_version: v1
