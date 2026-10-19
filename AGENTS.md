@@ -31,7 +31,7 @@ Every check exists **once**: in Ansible, or in `harness/load.py`, never in both.
   is a *disruptive* group: it runs only with `validation_disruptive: true` or when its tag is
   named with `--tags` (`when: validation_disruptive | bool or '<tag>' in ansible_run_tags`).
   N9 (group `namespace`) sends one SOTA request per public agent with the agent's own key: it uses
-  about 2-3k tokens of a 30k budget per 5 minutes, it does not use the budget up, so it stays in a
+  about 2-3k tokens of an 80k budget per 5 minutes, it does not use the budget up, so it stays in a
   default group.
 - **A failed check does not stop the run.** Each check records one result
   `{group, id, name, status, detail}` in `validation_results` (`status`: `PASS`, `FAIL`, `WARN`,
